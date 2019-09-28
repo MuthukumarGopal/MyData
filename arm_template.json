@@ -1,0 +1,468 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "type": "string",
+            "metadata": "Data Factory name",
+            "defaultValue": "adfcreation01"
+        },
+        "AzureDataLakeStore1_servicePrincipalKey": {
+            "type": "secureString",
+            "metadata": "Secure string for 'servicePrincipalKey' of 'AzureDataLakeStore1'"
+        },
+        "AzureDataLakeStore2_servicePrincipalKey": {
+            "type": "secureString",
+            "metadata": "Secure string for 'servicePrincipalKey' of 'AzureDataLakeStore2'"
+        },
+        "AzureBlobStorage1_connectionString": {
+            "type": "secureString",
+            "metadata": "Secure string for 'connectionString' of 'AzureBlobStorage1'"
+        },
+        "targetAdls_servicePrincipalKey": {
+            "type": "secureString",
+            "metadata": "Secure string for 'servicePrincipalKey' of 'targetAdls'"
+        },
+        "AzureDataLakeStore1_properties_typeProperties_dataLakeStoreUri": {
+            "type": "string",
+            "defaultValue": "adl://firstadls01.azuredatalakestore.net/"
+        },
+        "AzureDataLakeStore1_properties_typeProperties_servicePrincipalId": {
+            "type": "string",
+            "defaultValue": "685c3b49-d2be-43d3-94f4-0b45e25c4e5f"
+        },
+        "AzureDataLakeStore1_properties_typeProperties_tenant": {
+            "type": "string",
+            "defaultValue": "3896c798-902c-403d-bb10-74bfb288cf43"
+        },
+        "AzureDataLakeStore1_properties_typeProperties_subscriptionId": {
+            "type": "string",
+            "defaultValue": "054f4540-0016-4e2f-9b3f-0288b20436d4"
+        },
+        "AzureDataLakeStore1_properties_typeProperties_resourceGroupName": {
+            "type": "string",
+            "defaultValue": "mk_rgroup"
+        },
+        "AzureDataLakeStore2_properties_typeProperties_dataLakeStoreUri": {
+            "type": "string",
+            "defaultValue": "adl://secondadls02.azuredatalakestore.net/"
+        },
+        "AzureDataLakeStore2_properties_typeProperties_servicePrincipalId": {
+            "type": "string",
+            "defaultValue": "685c3b49-d2be-43d3-94f4-0b45e25c4e5f"
+        },
+        "AzureDataLakeStore2_properties_typeProperties_tenant": {
+            "type": "string",
+            "defaultValue": "3896c798-902c-403d-bb10-74bfb288cf43"
+        },
+        "AzureDataLakeStore2_properties_typeProperties_subscriptionId": {
+            "type": "string",
+            "defaultValue": "054f4540-0016-4e2f-9b3f-0288b20436d4"
+        },
+        "AzureDataLakeStore2_properties_typeProperties_resourceGroupName": {
+            "type": "string",
+            "defaultValue": "mk_rgroup"
+        },
+        "targetAdls_properties_typeProperties_dataLakeStoreUri": {
+            "type": "string",
+            "defaultValue": "https://secondadls02.azuredatalakestore.net/webhdfs/v1"
+        },
+        "targetAdls_properties_typeProperties_servicePrincipalId": {
+            "type": "string",
+            "defaultValue": "685c3b49-d2be-43d3-94f4-0b45e25c4e5f"
+        },
+        "targetAdls_properties_typeProperties_tenant": {
+            "type": "string",
+            "defaultValue": "3896c798-902c-403d-bb10-74bfb288cf43"
+        },
+        "targetAdls_properties_typeProperties_subscriptionId": {
+            "type": "string",
+            "defaultValue": "054f4540-0016-4e2f-9b3f-0288b20436d4"
+        },
+        "targetAdls_properties_typeProperties_resourceGroupName": {
+            "type": "string",
+            "defaultValue": "mk_rgroup"
+        }
+    },
+    "variables": {
+        "factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+    },
+    "resources": [
+        {
+            "name": "[concat(parameters('factoryName'), '/AzureDataLakeStore1')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureDataLakeStore",
+                "typeProperties": {
+                    "dataLakeStoreUri": "[parameters('AzureDataLakeStore1_properties_typeProperties_dataLakeStoreUri')]",
+                    "servicePrincipalId": "[parameters('AzureDataLakeStore1_properties_typeProperties_servicePrincipalId')]",
+                    "servicePrincipalKey": {
+                        "type": "SecureString",
+                        "value": "[parameters('AzureDataLakeStore1_servicePrincipalKey')]"
+                    },
+                    "tenant": "[parameters('AzureDataLakeStore1_properties_typeProperties_tenant')]",
+                    "subscriptionId": "[parameters('AzureDataLakeStore1_properties_typeProperties_subscriptionId')]",
+                    "resourceGroupName": "[parameters('AzureDataLakeStore1_properties_typeProperties_resourceGroupName')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/AzureDataLakeStore2')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureDataLakeStore",
+                "typeProperties": {
+                    "dataLakeStoreUri": "[parameters('AzureDataLakeStore2_properties_typeProperties_dataLakeStoreUri')]",
+                    "servicePrincipalId": "[parameters('AzureDataLakeStore2_properties_typeProperties_servicePrincipalId')]",
+                    "servicePrincipalKey": {
+                        "type": "SecureString",
+                        "value": "[parameters('AzureDataLakeStore2_servicePrincipalKey')]"
+                    },
+                    "tenant": "[parameters('AzureDataLakeStore2_properties_typeProperties_tenant')]",
+                    "subscriptionId": "[parameters('AzureDataLakeStore2_properties_typeProperties_subscriptionId')]",
+                    "resourceGroupName": "[parameters('AzureDataLakeStore2_properties_typeProperties_resourceGroupName')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/AzureBlobStorage1')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureBlobStorage",
+                "typeProperties": {
+                    "connectionString": "[parameters('AzureBlobStorage1_connectionString')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/targetAdls')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "type": "AzureDataLakeStore",
+                "typeProperties": {
+                    "dataLakeStoreUri": "[parameters('targetAdls_properties_typeProperties_dataLakeStoreUri')]",
+                    "servicePrincipalId": "[parameters('targetAdls_properties_typeProperties_servicePrincipalId')]",
+                    "servicePrincipalKey": {
+                        "type": "SecureString",
+                        "value": "[parameters('targetAdls_servicePrincipalKey')]"
+                    },
+                    "tenant": "[parameters('targetAdls_properties_typeProperties_tenant')]",
+                    "subscriptionId": "[parameters('targetAdls_properties_typeProperties_subscriptionId')]",
+                    "resourceGroupName": "[parameters('targetAdls_properties_typeProperties_resourceGroupName')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/Ftpir')]",
+            "type": "Microsoft.DataFactory/factories/integrationRuntimes",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "type": "SelfHosted",
+                "description": "FileTransfer IR",
+                "typeProperties": {}
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/target_adl_ds')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "AzureDataLakeStore2",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "DelimitedText",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureDataLakeStoreLocation",
+                        "folderPath": "target"
+                    },
+                    "columnDelimiter": ",",
+                    "escapeChar": "\\",
+                    "firstRowAsHeader": true,
+                    "quoteChar": "\""
+                },
+                "schema": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/AzureDataLakeStore2')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/source_adl_ds')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "AzureDataLakeStore1",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "DelimitedText",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureDataLakeStoreLocation",
+                        "folderPath": "source"
+                    },
+                    "columnDelimiter": ",",
+                    "escapeChar": "\\",
+                    "firstRowAsHeader": true,
+                    "quoteChar": "\""
+                },
+                "schema": [
+                    {
+                        "name": "Country                                           ",
+                        "type": "String"
+                    },
+                    {
+                        "name": "Brand                                             ",
+                        "type": "String"
+                    },
+                    {
+                        "name": "Date      ",
+                        "type": "String"
+                    },
+                    {
+                        "name": "Demand Sales $",
+                        "type": "String"
+                    },
+                    {
+                        "name": "Demand Sales Units",
+                        "type": "String"
+                    },
+                    {
+                        "name": "Shipped Sales $",
+                        "type": "String"
+                    }
+                ]
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/AzureDataLakeStore1')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/source_blob_ds1')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "AzureBlobStorage1",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "DelimitedText",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobStorageLocation",
+                        "container": "source"
+                    },
+                    "columnDelimiter": ",",
+                    "escapeChar": "\\",
+                    "firstRowAsHeader": true,
+                    "quoteChar": "\""
+                },
+                "schema": [
+                    {
+                        "name": "Country                                           ",
+                        "type": "String"
+                    },
+                    {
+                        "name": "Brand                                             ",
+                        "type": "String"
+                    },
+                    {
+                        "name": "Date      ",
+                        "type": "String"
+                    },
+                    {
+                        "name": "Demand Sales $",
+                        "type": "String"
+                    },
+                    {
+                        "name": "Demand Sales Units",
+                        "type": "String"
+                    },
+                    {
+                        "name": "Shipped Sales $",
+                        "type": "String"
+                    }
+                ]
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/AzureBlobStorage1')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/Target_adls_ds')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "targetAdls",
+                    "type": "LinkedServiceReference"
+                },
+                "annotations": [],
+                "type": "DelimitedText",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureDataLakeStoreLocation",
+                        "folderPath": "Canada"
+                    },
+                    "columnDelimiter": ",",
+                    "escapeChar": "\\",
+                    "quoteChar": "\""
+                },
+                "schema": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/targetAdls')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/Copyfrom_Source_Target')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "Coyyfrom_source_target",
+                        "type": "Copy",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "7.00:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "DelimitedTextSource",
+                                "storeSettings": {
+                                    "type": "AzureDataLakeStoreReadSettings",
+                                    "recursive": true,
+                                    "wildcardFileName": "*.*"
+                                },
+                                "formatSettings": {
+                                    "type": "DelimitedTextReadSettings"
+                                }
+                            },
+                            "sink": {
+                                "type": "DelimitedTextSink",
+                                "storeSettings": {
+                                    "type": "AzureDataLakeStoreWriteSettings"
+                                },
+                                "formatSettings": {
+                                    "type": "DelimitedTextWriteSettings",
+                                    "quoteAllText": true,
+                                    "fileExtension": ".txt"
+                                }
+                            },
+                            "enableStaging": false
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "source_adl_ds",
+                                "type": "DatasetReference",
+                                "parameters": {}
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "target_adl_ds",
+                                "type": "DatasetReference",
+                                "parameters": {}
+                            }
+                        ]
+                    }
+                ],
+                "annotations": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/datasets/source_adl_ds')]",
+                "[concat(variables('factoryId'), '/datasets/target_adl_ds')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/copyfromblob_Adls')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "Copyblob_to_ADLS",
+                        "type": "Copy",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "7.00:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "DelimitedTextSource",
+                                "storeSettings": {
+                                    "type": "AzureBlobStorageReadSettings",
+                                    "recursive": true,
+                                    "wildcardFileName": "*.*"
+                                },
+                                "formatSettings": {
+                                    "type": "DelimitedTextReadSettings"
+                                }
+                            },
+                            "sink": {
+                                "type": "DelimitedTextSink",
+                                "storeSettings": {
+                                    "type": "AzureDataLakeStoreWriteSettings"
+                                },
+                                "formatSettings": {
+                                    "type": "DelimitedTextWriteSettings",
+                                    "quoteAllText": true,
+                                    "fileExtension": ".txt"
+                                }
+                            },
+                            "enableStaging": false
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "source_blob_ds1",
+                                "type": "DatasetReference",
+                                "parameters": {}
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "Target_adls_ds",
+                                "type": "DatasetReference",
+                                "parameters": {}
+                            }
+                        ]
+                    }
+                ],
+                "annotations": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/datasets/source_blob_ds1')]",
+                "[concat(variables('factoryId'), '/datasets/Target_adls_ds')]"
+            ]
+        }
+    ]
+}
