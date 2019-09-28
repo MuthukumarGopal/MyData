@@ -1,0 +1,47 @@
+{
+	"name": "source",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "AzureBlobStorage1",
+			"type": "LinkedServiceReference"
+		},
+		"annotations": [],
+		"type": "DelimitedText",
+		"typeProperties": {
+			"location": {
+				"type": "AzureBlobStorageLocation",
+				"container": "source"
+			},
+			"columnDelimiter": ",",
+			"escapeChar": "\\",
+			"firstRowAsHeader": true,
+			"quoteChar": "\""
+		},
+		"schema": [
+			{
+				"name": "Country                                           ",
+				"type": "String"
+			},
+			{
+				"name": "Brand                                             ",
+				"type": "String"
+			},
+			{
+				"name": "Date      ",
+				"type": "String"
+			},
+			{
+				"name": "Demand Sales $",
+				"type": "String"
+			},
+			{
+				"name": "Demand Sales Units",
+				"type": "String"
+			},
+			{
+				"name": "Shipped Sales $",
+				"type": "String"
+			}
+		]
+	}
+}
