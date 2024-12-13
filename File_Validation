@@ -1,0 +1,1180 @@
+01. F_AttributeRetriever.py
+
+import os
+from PIL import Image
+from datetime import datetime
+import pathlib
+from tinytag import TinyTag
+from moviepy import VideoFileClip
+
+
+class AttributeRetriever:
+    """This is the class to Retrive the attributes."""
+
+    def __init__(self, file_path, attributes):
+        # self.spark=spark
+        # print("Attribute Retriver File")
+        print("attributes are ", attributes)
+        self.file_path = file_path
+        self.attributes = [a["File_Attribute_Name"] for a in attributes]
+        self.datatypes = {
+            a["File_Attribute_Name"]: a["Value_DataType"] for a in attributes
+        }
+        self.all_attributes = attributes
+        # print(self.datatypes)
+        self.path = "/" + str(file_path).replace(":", "")
+        self.function_mapper = {
+            "size": self.fn_getSize,
+            "createdtime": self.fn_get_createdTime,
+            "modifiedtime": self.fn_get_modifiedTime,
+            "filetype": self.fn_getType,
+            "imgresolution": self.fn_img_resolution,
+            "imgclrmode": self.fn_img_colormode,
+            "videoduration": self.fn_video_duration,
+            "videobitrate": self.fn_video_bit_rate,
+            "videodimension": self.fn_video_frame_dimension,
+        }
+
+    def fn_get_createdTime(self):
+        """
+        function : fn_get_createdTime
+        Description : This Function return the file created time
+        parameters : 0
+        returns : file created time
+        return type : Datatime
+        """
+        print("path is", self.path)
+        print(os.path.getctime(self.path))
+        return datetime.fromtimestamp(os.path.getctime(self.path)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+    def fn_get_modifiedTime(self):
+        """
+        function : fn_get_modifiedTime
+        Description : This Function return the file last modified time
+        parameters : 0
+        returns : file last modified time
+        return type : Datatime
+        """
+        return datetime.fromtimestamp(os.path.getmtime(self.path)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+    def fn_getPath(self):
+        """
+        function : fn_getPath
+        Description : This Function return the file path
+        parameters : 0
+        returns : file Path
+        return type : string
+        """
+        return os.path.abspath(self.path)
+
+    def fn_getType(self):
+        """
+        function : fn_getType
+        Description : This Function return the fileType
+        parameters : 0
+        returns : fileType
+        return type : string
+        """
+        # path="dbfs:/FileStore/shared_uploads/bandinaveen@fofdlm.onmicrosoft.com/test1.csv"
+        print("path is", self.path)
+        if pathlib.Path(self.path).is_dir():
+            lst = list(
+                set(
+                    [
+                        pathlib.Path(a).suffix
+                        for a in pathlib.Path(self.path).iterdir()
+                        if pathlib.Path(a).suffix != ""
+                    ]
+                )
+            )
+            if len(lst) > 0:
+                file_format = lst[0]
+            else:
+                file_format = None
+            print("***file format is", file_format)
+            return file_format
+        else:
+            return pathlib.Path(self.path).suffix
+
+    def fn_getSize(self):
+        """
+        function : fn_getSize
+        Description : This Function return the file size
+        parameters : 0
+        returns : filesize
+        return type : int
+        """
+        print("size 1 is", os.path.getsize(self.path))
+        return os.path.getsize(self.path)
+
+    def fn_img_resolution(self):
+        with open(self.path, "rb") as f:
+            image = Image.open(f)
+        return str(image.size)
+
+    def fn_img_colormode(self):
+        with open(self.path, "rb") as f:
+            image = Image.open(f)
+        return image.mode
+
+    # def fn_video_duration(self):
+    #     video= TinyTag.get(self.path)
+    #     print("video_duration",video)
+    #     return int(video.duration)
+
+    # def fn_video_duration(self):
+
+    #     video= TinyTag.get(self.path)
+    #     if video.duration==None:
+    #         duration=0
+    #     else:
+    #         duration=int(video.duration)
+    #     return duration
+
+    def fn_video_duration(self):
+        try:
+            video = VideoFileClip(self.path)
+            return int(video.duration)
+        except Exception as e:
+            print(e)
+            return 0
+
+    def fn_video_bit_rate(self):
+        video = TinyTag.get(self.path)
+        return int(video.bitrate)
+
+    def fn_video_frame_dimension(self):
+        video = VideoFileClip(self.path)
+        return str(video.size)
+
+    def fn_getattributes(self):
+        list_of_values = []
+        # print('attributes are',self.all_attributes)
+        """
+        function : fn_getattributes
+        Description : This Function return the list of values that contains attribute name,value,
+                  Datatype,Mapping_Id,attribute_Id,validation_needed,validation_type
+        parameters : 0
+        returns : list will all attribute details
+        return type : list
+        """
+        for a in self.all_attributes:
+            if a["File_Attribute_Name"] in self.function_mapper.keys():
+                values = {}
+                print("retrieivng ", a["File_Attribute_Name"])
+                values["File_Attribute_Name"] = a["File_Attribute_Name"]
+                values["File_Attribute_Value"] = self.function_mapper[
+                    a["File_Attribute_Name"]
+                ]()
+                # datatypes[a]=self.datatypes[a]
+                values["Value_DataType"] = a["Value_DataType"]
+                values["FNT_File_Attribute_Mapping_Id"] = a[
+                    "FNT_File_Attribute_Mapping_Id"
+                ]
+                values["FK_File_Attribute_Id"] = a["FK_File_Attribute_Id"]
+                values["Validation_Needed"] = a["Validation_Needed"]
+                values["Validation_Type"] = a["Validation_Type"]
+                list_of_values.append(values)
+            # print('value is',values)
+            else:
+                # values[a]=None
+                pass
+        # print('value ===',list_of_values)
+        return list_of_values
+
+--------------------------------------------------
+
+02. F_AttributeValidator.py
+
+
+class AttributeValidator:
+    """This is a class for validating file attributes."""
+
+    def __init__(self, dbcon, attributes, file_id, FNT_ID):
+        """The constructor for AttributeValidator class
+
+        Parameters:
+           attributes : File attributes from sql table.
+           file_id (string): File_id of the particular file.
+        """
+        # print("attribute Validator File")
+        self.FNT_ID = FNT_ID
+        # self.isValidation={a['File_Attribute_Name']:{a['Validation_Type'] for a in attributes}}
+        self.attributes = attributes
+        self.file_id = file_id
+        self.a = dbcon
+        self.format = self.a.fn_get_file_params(self.FNT_ID)["File_Type"]
+        # print(self.datatypes)
+        # self.path='/'+str(file_path).replace(':','')
+        self.function_mapper = {
+            "gt_0": self.fn_check_gt_0,
+            "Within_domain": self.fn_check_within_domain,
+            "within_5_days": self.fn_check_within_5_days,
+            "(300,300)": self.fn_check_img_resolution,
+            "modes": self.fn_check_imgclr_mode,
+            "within_dim": self.fn_check_vd_dimension,
+            "duration_gt_0": self.fn_check_vd_duration,
+            "bit_gt_0": self.fn_check_vd_bitrate,
+        }
+
+    def fn_check_gt_0(self, value):
+        """
+        The function to check size of the file.
+
+        Parameters:
+            value(int): Size of the file.
+
+        Returns:
+            Returns Boolean value.
+        """
+        # print('path is',self.path)
+        print("size is", value)
+        return int(value) > 0
+
+    def fn_check_within_domain(self, value):
+        """
+        The function to check file format.
+
+        Parameters:
+            value (string):format of the file.
+
+        Returns:
+            Boolean value.
+        """
+        print("selfformat", self.format)
+        print("other is", value)
+        domain = [
+            ".csv",
+            ".txt",
+            ".json",
+            ".xml",
+            ".parquet",
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".tif",
+            "mp4",
+            "mp3",
+            "avi",
+        ]
+        print(domain)
+        return value == "." + self.format
+
+    def fn_check_within_5_days(self, value):
+        """
+        The function to check file inserted within 5 days.
+
+        Parameters:
+            value(ComplexNumber): File inserted time.
+
+        Returns:
+            True - if file inserted within 5 days.
+        """
+        print(value)
+        from datetime import datetime, timedelta
+
+        time_between_insertion = datetime.now() - timedelta(days=5)
+        print(time_between_insertion)
+        return True
+
+    def fn_check_img_resolution(self, value):
+        print(value)
+        print(type(value))
+        value = value[1:len(value) - 1]
+        x = list(map(int, value.split(",")))
+        return tuple(x) >= (300, 300)
+
+    def fn_check_imgclr_mode(self, value):
+        print(value)
+        mode = ["L", "RGBA", "HSB", "RGB", "CMYK", "Grey scale", "Bitmap"]
+        if value in mode:
+            return True
+        else:
+            return False
+
+    def fn_check_vd_duration(self, value):
+        print("video duration is", value)
+        return int(value) > 0
+
+    def fn_check_vd_bitrate(self, value):
+        print("bitrate", value)
+        return int(value) > 0
+
+    def fn_check_vd_dimension(self, value):
+        print("Frame dimension", value)
+        value = value[1:len(value) - 1]
+        x = list(map(int, value.split(",")))
+        return tuple(x) > (1000, 1000)
+
+    def fn_getattributesValidation(self):
+        """
+        The function to validate file attributes.
+
+        Parameters:0
+
+        Returns:
+             check results and list of details
+        """
+        subresult = {}
+
+        list_of_details = []
+        for b1 in self.attributes:
+            details = {}
+            if b1["Validation_Needed"]:
+                print(b1["Validation_Type"])
+                print(b1["File_Attribute_Value"])
+                res = self.function_mapper[b1["Validation_Type"]](
+                    b1["File_Attribute_Value"]
+                )
+                subresult[b1["FK_File_Attribute_Id"]] = res
+                details["FK_File_Attribute_Id"] = b1["FK_File_Attribute_Id"]
+                details["File_id"] = self.file_id
+                details["validation_status"] = res
+                list_of_details.append(details)
+        # print('subsresult values are ',subresult)
+        # print('veall',all(subresult.values()))
+        # subresult['OverAllStatus']=any(subresult.values())
+        result = all(subresult.values())
+        return result, list_of_details
+
+    # print(json.dumps(list_of_details))
+
+
+""" 
+help(AttributeValidator)
+help(AttributeValidator.fn_check_gt_0)
+help(AttributeValidator.fn_check_within_domain)
+help(AttributeValidator.fn_check_within_5_days)
+help(AttributeValidator.fn_getattributesValidation)
+help(AttributeValidator.fn_getattributesValidation_OBSOLTE_REMOVE)
+"""
+
+
+-------------------------------------
+
+03..F_DBreader.py
+
+class databasereaders:
+
+    def __init__(self, dbcon, FNT_ID, job_run_id):
+        self.job_run_id = job_run_id
+        print("RetriveListOfFIles file")
+        self.FNT_ID = FNT_ID
+        self.a = dbcon
+        self.con = self.a.fn_get_connection()
+
+    def fn_get_hierarchypath(self, end_date, rootpath):
+        statement = f"""exec [dbo].[sp_get_filepickuptime] @fntid='{self.FNT_ID}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()
+        resultSet = exec_statement.getResultSet()
+        results = []
+        while resultSet.next():
+            vals = {}
+            vals["date_string"] = resultSet.getString("LastFilePickup_Ts")
+            results.append(vals)
+            sdate = results[0]
+            start_date = list(sdate.values())[0]
+            print("Start_date is ", start_date)
+            lst_json = self.a.fn_get_list_of_paths(rootpath, start_date, end_date)
+            print("lst_json", lst_json)
+        return lst_json
+
+    def fn_get_list_of_attributes(self, fnt_id: int):
+        try:
+            statement = f"""EXEC dbo.sp_get_mapped_attributes @fnt_id = {fnt_id}"""
+
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            resultSet = exec_statement.getResultSet()
+            result_dict = []
+            while resultSet.next():
+                vals = {}
+                vals["File_Attribute_Name"] = resultSet.getString("File_Attribute_Name")
+                vals["Validation_Needed"] = resultSet.getBoolean("Validtion_Needed")
+                vals["Validation_Type"] = resultSet.getString("Validation_Type")
+                vals["Value_DataType"] = resultSet.getString("Value_DataType")
+                vals["FNT_File_Attribute_Mapping_Id"] = resultSet.getString(
+                    "FNT_File_Attribute_Mapping_Id"
+                )
+                vals["FK_File_Attribute_Id"] = resultSet.getString(
+                    "FK_File_Attribute_Id"
+                )
+
+                result_dict.append(vals)
+
+            # Close connections
+            exec_statement.close()
+            # self.con.close()
+            return result_dict
+        except Exception as e:
+            print(e)
+
+    def fn_get_landing_time(self, pk_file_id):
+        statement = (
+            f"""exec [dbo].[sp_get_Late_Arriving_Files] @file_id='{pk_file_id}'"""
+        )
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()
+        resultSet = exec_statement.getResultSet()
+        results = []
+        while resultSet.next():
+            vals = {}
+            vals["Landing_Time"] = resultSet.getString("Landing_Time")
+            vals["Pk_file_id"] = resultSet.getString("Pk_file_id")
+            vals["TimeDiffinSeconds"] = resultSet.getString("TimeDiffinSeconds")
+            results.append(vals)
+
+        return results
+
+    def fn_get_file_schema_details(self):
+        statement = f"""select Incoming_freqvalue, FK_Incoming_frequnit,FV_Needed from T_META_File_Standard_Schema where fnt_id='{self.FNT_ID}'"""
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()
+        resultSet = exec_statement.getResultSet()
+        results = []
+        while resultSet.next():
+            vals = {}
+            vals["FK_Incoming_frequnit"] = resultSet.getString("FK_Incoming_frequnit")
+            if vals["FK_Incoming_frequnit"] == "min":
+                vals["Incoming_freqvalue"] = resultSet.getInt("Incoming_freqvalue")
+                vals["Incoming_freqvalue"] = vals["Incoming_freqvalue"] * 60
+            elif vals["FK_Incoming_frequnit"] == "hr":
+                vals["Incoming_freqvalue"] = resultSet.getInt("Incoming_freqvalue")
+                vals["Incoming_freqvalue"] = vals["Incoming_freqvalue"] * 60 * 60
+            else:
+                vals["Incoming_freqvalue"] = resultSet.getInt("Incoming_freqvalue")
+                vals["Incoming_freqvalue"] = vals["Incoming_freqvalue"]
+            vals["FV_Needed"] = resultSet.getInt("FV_Needed")
+            results.append(vals)
+        return results
+
+
+
+-----------------------------
+04. F_logfiles.py
+
+import json
+
+
+class updatinglogs:
+    """This is a class for updating logs in database"""
+
+    def __init__(
+        self,
+        dbcon,
+        sourceName,
+        dest_dl_layer,
+        FNT_ID,
+        job_run_id,
+        HierarchyFlag,
+        FileTemplate,
+        spark1,
+    ):
+        """The constructor for updatinglogs class
+
+        Parameters:
+           sourceName(string)  : source system name of file.
+           source_dl_layer (string): source file path.
+           dest_dl_layer(string):destination file path.
+           suc_path(string):Success file path.
+           err_path(string):Error file path.
+           sus_path(string):Suspense file path.
+           FNT_ID(string):Filename Template Id.
+           job_run_id(string):Job Run Id.
+           FileTemplate(string):Filename Template.
+        """
+
+        self.sourceName = sourceName
+        self.fnt_attributes_master = {}
+        # self.con=self.a.fn_get_connection()
+
+        self.dest_dl_layer = dest_dl_layer
+
+        self.FNT_ID = FNT_ID
+        self.job_run_id = job_run_id
+        self.HierarchyFlag = HierarchyFlag
+        self.FileTemplate = FileTemplate
+        self.a = dbcon
+
+        self.con = self.a.fn_get_connection()
+
+    def fn_log_List_of_Files(self, Json_file_list: str) -> str:
+        """
+        The function to update T_file_info log
+
+        Parameters:
+            Json_file_list: list that contains json file of file info
+
+        Returns:
+            Returns result dict contains filename,fnt_id,file_id,file_path.
+        """
+        try:
+            print("json file is", Json_file_list)
+            final_json = json.dumps(Json_file_list)
+            print("-------json", final_json)
+            statement = f"""EXEC dbo.sp_insert_T_file_info @json = '{final_json}', @fntid='{self.FNT_ID}' , @jobid='{self.job_run_id}'"""
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            resultSet = exec_statement.getResultSet()
+            result_dict = []
+            # print(resultSet)
+            while resultSet.next():
+                vals = {}
+                vals["FileName"] = resultSet.getString("File_Name")
+                vals["FK_FNT_Id"] = resultSet.getInt("FK_FNT_Id")
+                vals["PK_file_id"] = resultSet.getInt("PK_File_Id")
+                vals["FilePath"] = resultSet.getString("File_path")
+
+                result_dict.append(vals)
+            # Close connections
+            exec_statement.close()
+            # self.con.close()
+            print("Result_dict is", result_dict)
+            return result_dict
+        except Exception as e:
+            print(e)
+
+    def fn_log_attribute_values(self, jsonip):
+        """
+        The function to update attribute values
+
+        Parameters:
+            jsonip= json input
+            file_id(string)=File id
+
+        """
+        print("trying to log into table", jsonip)
+
+        statement = (
+            f"""EXEC dbo.sp_insert_T_file_attribute_details_new @json = '{jsonip}'"""
+        )
+        print("fn_log_attribute_values - statement", statement)
+        exec_statement = self.con.prepareCall(statement)
+        res = exec_statement.execute()
+        print(res)
+
+        # Close connections
+        exec_statement.close()
+        # self.con.close()
+
+    def fn_update_attribute_validation(self, jsonip):
+        """
+        The function to update attribute validation log
+
+        Parameters:
+            Json_ip: Json input
+
+        """
+        print("jsonis", jsonip)
+        try:
+            statement = f"""EXEC dbo.sp_update_file_attribute_validation_new @json = '{jsonip}'"""
+            exec_statement = self.con.prepareCall(statement)
+            res = exec_statement.execute()
+            print(res)
+
+            # Close connections
+            exec_statement.close()
+        # self.con.close()
+
+        except Exception as e:
+            print(e)
+
+    '''
+    
+    def fn_insert_delta_logs(self,file,job_id,pipeline_run_id,from_dl_layer,ref_tracking_ids=None):
+        """
+        The function to insert T_file_delta logs
+  
+        Parameters:
+            file_id: File Id.
+            job_id: Job run Id.
+            pipeline_run_id: Pipeline run Id.
+            fnt_id: Filename Template Id.
+            from_dl_layer: From delta layer.
+            from_dl_layer_path: From delta layer path.
+            ref_tracking_ids: Reference tracking Id.
+        
+        """
+        try:
+            statement = f"""EXEC dbo.[usp_Log_T_file_Deltas_new] @json = '{json.dumps(file)}' ,@job_run_id ='{job_id}',@pipeline_run_id ='{pipeline_run_id}',@from_dl_layer ='{from_dl_layer}',@key='FileValidation',@ref_tracking_ids='{ref_tracking_ids}'"""
+            exec_statement = self.con.prepareCall(statement)
+            res=exec_statement.execute()
+
+          # Close connections
+            exec_statement.close()
+          #self.con.close()
+
+        except Exception as e:
+            print(e)
+           
+    def fn_update_delta_logs_new(self,file,job_id,to_dl_layer,to_dl_layer_path,validation_status=None,
+                               copy_activity_status=None,validation_result=None,ref_tracking_ids=None):  
+        """
+        The function to update delta logs
+  
+        Parameters:
+            file_id: File Id.
+            job_id: Job run Id.
+            fnt_id: Filename Template Id.
+            to_dl_layer: To delta layer.
+            to_dl_layer_path: To delta layer path.
+            validation_status
+            copy_activity_status
+            validation_result
+            ref_tracking_ids: Reference tracking Id.
+            
+          
+        Returns:
+            Returns result dict contains filename,fnt_id,file_id,file_path.
+        """
+        try:
+            statement = f"""EXEC dbo.[usp_update_log_T_file_Deltas_new] @tracking_id ='{job_id+'-'+str(self.FNT_ID)}',@json = '{json.dumps(file)}',@to_dl_layer ='{to_dl_layer}',@to_dl_layer_path ='{to_dl_layer_path}',@validation_status ='{validation_status}',@copy_Activity_status ='{copy_activity_status}',@validation_result={validation_result},@key='FileValidation',@ref_tracking_ids={ref_tracking_ids}"""
+            exec_statement = self.con.prepareCall(statement)
+            res=exec_statement.execute()
+
+          # Close connections
+            exec_statement.close()
+          #self.con.close()
+
+        except Exception as e:
+            print(e)
+    def fn_update_delta_logs_newcopy(self,file,job_id,to_dl_layer,validation_status=None,
+                               copy_activity_status=None,ref_tracking_ids=None):    
+        try:
+            statement = f"""EXEC dbo.[usp_update_log_T_file_Deltas_new123] @tracking_id ='{job_id+'-'+str(self.FNT_ID)}',@json='{json.dumps(file)}',@to_dl_layer ='{to_dl_layer}',@validation_status ='{validation_status}',@copy_Activity_status ='{copy_activity_status}',@key='FileValidation',@ref_tracking_ids={ref_tracking_ids}"""
+            exec_statement = self.con.prepareCall(statement)
+            res=exec_statement.execute()
+
+ 
+
+          # Close connections
+            exec_statement.close()
+          #self.con.close()
+
+ 
+
+        except Exception as e:
+          print(e)
+    
+    def fn_add_alerts(self,fnt_id,alert_type,remarks):
+        """
+        The function to add alerts
+  
+        Parameters:
+            
+            fnt_id: Filename Template Id.
+            alert_type: Type of alerts.
+            remarks: remarks for alert
+          
+        
+        """
+        try:
+            print('trying to insert  to alerts')
+            print('alert type',alert_type)
+            print('fnt_id',fnt_id)
+            print('remarks',remarks)
+            statement = f"""EXEC dbo.[usp_AlertHandler] @Alert_validation_Type ='{alert_type}',@FilenameTemplate_id ='{fnt_id}',@remarks='{remarks}'"""
+            print("Statement is " ,statement)
+            exec_statement = self.con.prepareCall(statement)
+            res=exec_statement.execute()
+
+          # Close connections
+            exec_statement.close()
+          #self.con.close()
+
+        except Exception as e:
+            print(e)
+      '''
+
+    def fn_update_filepickup_ts(self, end_date, FNT_ID):
+        """
+        The function to update delta logs
+
+        Parameters:
+           FNT_ID: File name template Id.
+           end_date: End date.
+        """
+        statement = f"""EXEC [dbo].[sp_insert_filepickupts] @Job_Run_Id ='{self.job_run_id}',@end_date ='{end_date}', @FNT_ID='{FNT_ID}'"""
+        exec_statement = self.con.prepareCall(statement)
+        res = exec_statement.execute()
+        print(res)
+
+        # Close connections
+        exec_statement.close()
+        # self.con.close()
+
+--------------------------------
+
+05.  F_RetrivelistofAttributes.py
+# from UtilityFunctions import *
+
+from F_AttributeRetriever import AttributeRetriever
+from F_DBreader import databasereaders
+
+
+class Retrivelistattributes:
+
+    def __init__(self, dbcon, FNT_ID, job_run_id):
+
+        # self.spark=spark
+        self.job_run_id = job_run_id
+        self.fnt_attributes_master = {}
+        self.FNT_ID = FNT_ID
+        self.a = dbcon
+        self.dbread = databasereaders(self.a, self.FNT_ID, self.job_run_id)
+        # print("spark in retriveattributes")
+
+    def fn_file_process_slave_get_attributes(self, file):
+
+        fnt_id = file["FK_FNT_Id"]
+        file_id = file["PK_file_id"]
+        file_path = file["FilePath"]
+
+        # print('fnt id is',fnt_id)
+        if fnt_id not in self.fnt_attributes_master:
+            # print('fnt not in ')
+            self.fnt_attributes_master[fnt_id] = self.dbread.fn_get_list_of_attributes(
+                fnt_id
+            )
+        return self.fn_retrieve_individual_files_Attributes(
+            fnt_id, file_id, file_path, self.fnt_attributes_master[fnt_id]
+        )
+
+    def fn_retrieve_individual_files_Attributes(
+        self, fnt_id, file_id, file_path, attributes
+    ):
+        print("inside fn", file_path, file_id, fnt_id)
+        print("attributes are", attributes)
+        ar = AttributeRetriever(file_path, attributes)
+        values = ar.fn_getattributes()
+        print("values are", values)
+        return values
+
+
+------------------------------------------
+06.F_RetriveListOfFiles.py
+from F_DBreader import databasereaders
+import os
+from datetime import datetime
+
+
+class RetriveListofFiles:
+
+    def __init__(
+        self,
+        dbcon,
+        con,
+        sourceName,
+        source_dl_layer,
+        dest_dl_layer,
+        HierarchyFlag,
+        FNT_ID,
+        FileTemplate,
+        job_run_id,
+        spark1,
+    ):
+        # print("spark in retrivelistoffiles")
+        self.spark = spark1
+        dbutils = self.get_dbutils()
+        print(dbutils)
+        self.job_run_id = job_run_id
+        # rint("RetriveListOfFIles file")
+        self.sourceName = sourceName
+        self.source_dl_layer = source_dl_layer
+        self.dest_dl_layer = dest_dl_layer
+        self.HierarchyFlag = HierarchyFlag
+        self.FNT_ID = FNT_ID
+        self.FileTemplate = FileTemplate
+        self.a = dbcon
+        # self.con=self.a.fn_get_connection()
+        self.con = con
+        self.dbread = databasereaders(self.con, self.FNT_ID, self.job_run_id)
+        # dbutils=self.get_dbutils(spark)
+
+    def get_dbutils(self):
+        try:
+            from pyspark.dbutils import DBUtils
+
+            dbutils = DBUtils(self.spark)
+        except ImportError:
+            import IPython
+
+            dbutils = IPython.get_ipython().user_ns["dbutils"]
+        return dbutils
+
+    def fn_Retrieve_list_of_files(self, end_date) -> list:
+
+        try:
+
+            # dllayer=self.source_dl_layer
+            # pathname='landing'
+            # path=self.a.fn_get_paths(self.sourceName,'',self.FNT_ID,dllayer,pathname)
+            path = self.a.func_get_paths()
+            # rootpath=list(path.values())[0]
+            rootpath = path[self.source_dl_layer]
+            self.end_date = end_date
+            print("File_listing_path", rootpath)
+            print(self.end_date)
+            # HierarchyFlag='False'
+            print("hierarchy")
+            if self.HierarchyFlag == "True":
+                listofjson = self.fn_Retrive_list_of_files_hierarchy0(
+                    self.end_date, rootpath
+                )
+                return listofjson
+            else:
+                listofnametime = self.fn_Retrieve_list_of_files_hierarchy1(rootpath)
+                return listofnametime
+        except Exception as e:
+            print(e)
+            return list()
+
+    def fn_Retrive_list_of_files_hierarchy0(self, endate, rootpath):
+        self.end_date = endate
+        self.rootpath = rootpath
+        list_json = self.dbread.fn_get_hierarchypath(self.end_date, self.rootpath)
+        return list_json
+
+    def fn_Retrieve_list_of_files_hierarchy1(self, rootpath):
+        dbutils = self.get_dbutils()
+        print("root path is", rootpath)
+        print("executing dbutils comand")
+        fileList = dbutils.fs.ls(rootpath)
+        print("done executing dbutils comand")
+        print("filelist is", fileList)
+        print("file template is", self.FileTemplate)
+        listoffiles = []
+        for files in fileList:
+            if files.name.startswith(self.FileTemplate):
+                # listoffiles.append(files)
+                listoffiles.append(
+                    [
+                        files.path.replace("dbfs:", ""),
+                        files.name,
+                        files.size,
+                        files.modificationTime,
+                    ]
+                )
+                # print("listoffiles",listoffiles)
+        list_of_name_time = [
+            {
+                "CreatedTime": datetime.fromtimestamp(
+                    os.path.getctime("/" + str(f[0]).replace(":", ""))
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+                "FileName": f[1],
+                "FilePath": (str(f[0]).replace(":", "")),
+            }
+            for f in listoffiles
+        ]
+        print("lst with time and path", list_of_name_time)
+        return list_of_name_time
+
+
+---------------------
+07.F_UtilityFunctions.py
+import pandas
+import os
+import os.path
+from datetime import datetime
+
+
+class Dtbaseconnect:
+    def __init__(
+        self,
+        dbasecon,
+        sourceName,
+        source_dl_layer,
+        dest_dl_layer,
+        FNT_ID,
+        FileTemplate,
+        job_run_id,
+        HierarchyFlag,
+        spark,
+        IOTFlag,
+    ):
+        self.dbcon = dbasecon
+        self.spark = spark
+        self.con = self.dbcon.fn_get_connection()
+        self.sourceName = sourceName
+        self.source_dl_layer = source_dl_layer
+        self.dest_dl_layer = dest_dl_layer
+        self.FNT_ID = FNT_ID
+        self.FileTemplate = FileTemplate
+        self.job_run_id = job_run_id
+        self.HierarchyFlag = HierarchyFlag
+        print("UtilityFunctions File")
+        # dbutils=self.get_dbutils(spark)
+        self.IOTFlag = IOTFlag
+
+    def get_dbutils(self):
+        try:
+            from pyspark.dbutils import DBUtils
+
+            dbutils = DBUtils(self.spark)
+        except ImportError:
+            import IPython
+
+            dbutils = IPython.get_ipython().user_ns["dbutils"]
+        return dbutils
+
+    '''
+    def fn_get_paths(self,sourcesystem_name,usecase_name,fnt_id,dllayer,pathtype):
+    
+        #dbutils=self.get_dbutils()
+        try:
+            statement = f"""EXEC dbo.sp_getPath  @sourcesystem='{sourcesystem_name}',@usecase='{usecase_name}',@fnt={fnt_id},@dllayer='{dllayer}',@pathtype='{pathtype}'"""
+            print(statement)
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            resultSet=exec_statement.getResultSet()   
+            while (resultSet.next()):
+                vals={}        
+                vals['path']=resultSet.getString('path')               
+                
+            return vals
+            exec_statement.close()   
+        except Exception as e:
+            print(e)
+    '''
+
+    def cleanNullTerms(self, d):
+        return {k: v for k, v in d.items() if v is not None}
+
+    def func_get_paths(self):
+        try:
+            statement = f"""select * from T_MST_file_path fp inner join T_mst_dl_layer la on la.PK_Dl_Layer_Id=fp.fk_dl_layer_id  
+where la.PK_Dl_Layer_Id = (select PK_Dl_Layer_Id from T_mst_DL_layer where Dl_Layer_Name='{self.source_dl_layer}') or la.PK_Dl_Layer_Id = (select PK_Dl_Layer_Id from T_mst_DL_layer where Dl_Layer_Name='{self.dest_dl_layer}')"""
+            # print(statement)
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            resultSet = exec_statement.getResultSet()
+            vals1 = {}
+            while resultSet.next():
+                vals = {}
+                vals["Landing"] = resultSet.getString("Landing_Path")
+                vals["Success"] = resultSet.getString("Success_File_Path")
+                vals["Error"] = resultSet.getString("Error_File_Path")
+                vals["Suspense"] = resultSet.getString("Suspense_File_Path")
+                # vals['Success']=resultSet.getString('Success_File_Path')
+                # print(vals)
+                nonnull = self.cleanNullTerms(vals)
+                vals1.update(nonnull)
+                print("paths:", vals1)
+            path = {}
+            for value in vals1.keys():
+                if value == "Landing" and self.IOTFlag == "True":
+                    partitionname, foldername = self.fn_iotfolder()
+
+                    path[value] = (
+                        "/Volumes/"
+                        + vals1[value].replace("{sourcesystem}", self.sourceName)
+                        + "/"
+                        + foldername
+                        + "/"
+                        + partitionname
+                    )
+                elif value != "Landing":
+                    path[value] = (
+                        "/Volumes/"
+                        + vals1[value].replace("{sourcesystem}", self.sourceName)
+                        + "/"
+                        + self.FileTemplate
+                    )
+
+                else:
+                    path[value] = "/Volumes/" + vals1[value].replace(
+                        "{sourcesystem}", self.sourceName
+                    )
+            return path
+            exec_statement.close()
+        except Exception as e:
+            print(e)
+
+    def fn_iotfolder(self):
+        statement = f"""select IOT_partition_name,IOT_folder_name from T_mst_file_standard_Schema where IS_IOT='{self.IOTFlag}' and FNT_Id='{self.FNT_ID}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()
+        resultSet = exec_statement.getResultSet()
+        print(resultSet)
+        while resultSet.next():
+
+            iot_partition_name = resultSet.getString("IOT_partition_name")
+            iot_folder_name = resultSet.getString("IOT_folder_name")
+
+            # vals['Success']=resultSet.getString('Success_File_Path')
+
+        return iot_partition_name, iot_folder_name
+        exec_statement.close()
+
+    def fn_get_list_of_paths(self, path, start, end):
+
+        dbutils = self.get_dbutils()
+        lst_files = []
+
+        def get_dir_content(ls_path):
+            # print("enddateis:",end)
+            print("ls path is", ls_path)
+            dir_paths = dbutils.fs.ls(ls_path)
+            print("dir path is", dir_paths)
+            subdir_paths = [
+                get_dir_content(p.path)
+                for p in dir_paths
+                if p.isDir() and p.path != ls_path
+            ]
+            # print('sudbir path is',subdir_paths)
+            flat_subdir_paths = [p for subdir in subdir_paths for p in subdir]
+            # print('flat subdir paths is',flat_subdir_paths)
+            # map(lambda p: p.path, dir_paths)
+            # return [(p.path,datetime.fromtimestamp(os.stat(p.path).st_ctime)) for p in dir_paths if p.size>0] + flat_subdir_paths
+            final_list = [
+                p.path for p in dir_paths if not p.isDir()
+            ] + flat_subdir_paths
+            return final_list
+
+        if start is None:
+            lst_files.extend(get_dir_content(path))
+            list_of_name_time = [
+                {
+                    "CreatedTime": datetime.fromtimestamp(
+                        os.path.getctime("/" + str(f).replace(":", ""))
+                    ).strftime("%Y-%m-%d %H:%M:%S"),
+                    "FileName": os.path.split(f)[1],
+                    "FilePath": ("/" + str(f).replace(":", "")),
+                }
+                for f in lst_files
+            ]
+        else:
+            time_range = pandas.date_range(start, end, freq="H")
+            for val in time_range:
+                day = str(val.day).zfill(2)
+                month = str(val.month).zfill(2)
+                year = str(val.year).zfill(4)
+                hour = str(val.hour).zfill(2)
+                # print(str(hour.day).zfill(2))
+                # print(str(hour.month).zfill(2))
+                # print(str(hour.year).zfill(4))
+                # print(str(hour.hour).zfill(2))
+                print(f"{path}/{year}/{month}/{day}/{hour}")
+                fullpath = f"{path}/{year}/{month}/{day}/{hour}"
+                try:
+                    lst_files.extend(get_dir_content(fullpath))
+                    list_of_name_time = [
+                        {
+                            "CreatedTime": datetime.fromtimestamp(
+                                os.path.getctime("/" + str(f).replace(":", ""))
+                            ).strftime("%Y-%m-%d %H:%M:%S"),
+                            "FileName": os.path.split(f)[1],
+                            "FilePath": ("/" + str(f).replace(":", "")),
+                        }
+                        for f in lst_files
+                    ]
+                except Exception as e:
+                    print(e)
+                    pass
+        return list_of_name_time
+
+    def fn_put_datepartition(self):
+        current_time = datetime.now()
+        return f"/{str(current_time.year).zfill(4)}/{str(current_time.month).zfill(2)}/{str(current_time.day).zfill(2)}/{str(current_time.hour).zfill(2)}/"
+
+    def fn_get_file_params(self, FNT_ID):
+        statement = f"""select typ.file_type ,fnt.batch_size from t_META_file_standard_Schema fnt inner join T_mst_file_type typ on \
+          fnt.fk_file_type_id=typ.pk_file_type_id  where FNT_ID='{FNT_ID}'"""
+
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()
+        resultSet = exec_statement.getResultSet()
+
+        while resultSet.next():
+            vals = {}
+            vals["File_Type"] = resultSet.getString("File_Type")
+            vals["Batch_Size"] = resultSet.getInt("Batch_Size")
+
+            # Close connections
+        exec_statement.close()
+        return vals
+
+    def fn_calculate_file_path(
+        self, fnt_id, filename, validation_status, file_id, reqpath, srcpath
+    ):
+        """
+        The function to calculate file paths
+
+        Parameters:
+            fnt_id: Filename template id.
+            filename: Filename template.
+            validation_status:Status of attribute validations.
+            file_id: File Id.
+
+        Returns:
+            Returns source, destination and resulr path.
+        """
+        print("filename is ", filename)
+        self.filename = filename
+        self.srcpath = srcpath
+        result = None
+        print("validation status is", validation_status)
+        if validation_status:
+            result = "Success"
+            path = "Success"
+        elif not validation_status:
+            result = "Error"
+            path = "Error"
+        if fnt_id == 0:
+            result = "Suspense"
+            path = "Suspense"
+        # sourcepath=self.sourcemount+'/'+self.applicationName
+        # destpath=self.fn_get_correct_path(self.dest_dl_layer,path)
+        # dbasecon=Dtbaseconnect(database=sqldatabase,server=sqlserver)
+        # reqpath=self.fn_get_paths(self.sourceName,'',self.FNT_ID,self.dest_dl_layer,path)
+        # reqpath=self.func_get_paths()
+        # destpath=list(reqpath.values())[0]
+        destpath = reqpath[path]
+
+        # filename=file['FileName']
+        src, dest = self.fn_get_src_dest_path(
+            self.srcpath, destpath, file_id, self.filename
+        )
+        return src[1:], dest, result
+
+    def fn_get_src_dest_path(self, srcpath, destPath, file_id, filename):
+        """
+        The function to move files
+
+        Parameters:
+            destPath:Destination path.
+            file_id:File Id.
+        Returns:
+            Returns source path, destination path.
+        """
+        source_path = srcpath
+
+        # dbasecon=Dtbaseconnect(database=sqldatabase,server=sqlserver)
+        hie_folder = self.fn_put_datepartition()
+        print("hie_folder is", hie_folder)
+        if self.HierarchyFlag == "True":
+            print("path parts are", destPath, self.FileTemplate, hie_folder, filename)
+            # sourcepath=path['landing']+filename
+            print("src", source_path)
+            destinationpath = destPath + hie_folder + filename
+            print("dest", destinationpath)
+        else:
+            # sourcepath=srcpath+filename
+            destinationpath = destPath + hie_folder + filename
+
+        print("src and dest are", source_path, destinationpath)
+        # dbutils.notebook.run("MoveFiles",60,{'sourcepath':sourcepath,'destpath':destinationpath})
+        return source_path, destinationpath
+
+
+-----------------------
+
+08. NB_FileValidation(ADB)
