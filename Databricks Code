@@ -1,1 +1,1895 @@
 Hi This is muthukumar
+
+01.F_AccessoryFunctions.py
+import json
+import requests
+from pyspark import SparkContext
+import sys
+import re
+import ast
+import datetime
+from F_AuthenticationDictionary import auth_dict
+
+
+class AccessoryFunctions:
+    def __init__(self, API_meta):
+        self.API_meta = API_meta
+
+    # in case of parameterized path after the endpoint
+    # api.com/endpoint/pathval1/pathval2?.....
+    def getPath(self):
+        try:
+            if self.API_meta["Path"] != "NA":
+
+                params = self.API_meta["Path"].strip().split(",")
+                path = "/" + "/".join(params)
+            else:
+                path = ""
+            return path
+        except Exception as e:
+            print(e)
+            return None
+
+    # for key based extraction
+    # api/endpoint?key=value
+    def getKey(self):
+        try:
+            if self.API_meta["keys"] != "NA":
+                key = self.API_meta["keys"]
+                # cannot request data without the key
+                if key == "":
+                    print("Key cannot be empty")
+                    sys.exit()
+            else:
+                key = ""
+            return key
+        except Exception as e:
+            print(e)
+            return None
+
+    # optional parameters when extraction data
+    def getParam(self):
+        try:
+            # parameter is optional
+            if self.API_meta["EP_Param"] != "NA":
+                param_query = self.API_meta["EP_Param"]
+            else:
+                param_query = ""
+            return param_query
+        except Exception as e:
+            print(e)
+            return None
+
+    def getDateTime(self):
+        try:
+            if self.API_meta["Timeframe"] != "":                
+                t_param = self.API_meta["Timeframe"].strip().split(",")
+                self.API_meta["Timeframe_cur"] = re.sub(
+                    " ", ",", self.API_meta["Timeframe_cur"]
+                )
+                self.API_meta["Timeframe_next"] = re.sub(
+                    " ", ",", self.API_meta["Timeframe_next"]
+                )
+                x_cur = ast.literal_eval(self.API_meta["Timeframe_cur"])
+                x_next = ast.literal_eval(self.API_meta["Timeframe_next"])
+                dates_cur = [
+                    datetime.strptime(date, self.API_meta["DateTimeFormat"])
+                    for date in x_cur
+                ]
+                dates_next = [
+                    datetime.strptime(date, self.API_meta["DateTimeFormat"])
+                    for date in x_next
+                ]
+                print(dates_next)
+
+                if len(t_param) != len(dates_cur):
+                    print("Metadata entry format not supported")
+                    return "Metadata entry format not supported"
+
+                param = (
+                    t_param[0]
+                    + "="
+                    + dates_cur[0].strftime(self.API_meta["DateTimeFormat"])
+                    + "&"
+                    + t_param[1]
+                    + "="
+                    + dates_cur[1].strftime(self.API_meta["DateTimeFormat"])
+                )
+                """
+                duration=dates_next[1]-dates_next[0]
+                gap=dates_next[0]-dates_cur[1]
+
+                dates_cur=dates_next
+                dates_next=[(dates_next[1]+gap), (dates_next[1]+duration+gap)]
+                converted_dates_cur = [date.strftime(self.API_meta["DateTimeFormat"]) for date in dates_cur]
+                converted_dates_next = [date.strftime(self.API_meta["DateTimeFormat"]) for date in dates_next]         
+                self.API_meta["Timeframe_cur"]=str(np.array(converted_dates_cur))
+                self.API_meta["Timeframe_next"]=str(np.array(converted_dates_next))
+                for index in range(len(metadata_df)):
+                    if metadata_df.loc[index,'API_id'] == int(self.API_meta["API_id"]):
+                        metadata_df.at[index,'Timeframe_cur'] = converted_dates_cur
+                        metadata_df.at[index,'Timeframe_next'] = converted_dates_next
+                        break"""
+
+                return param
+            else:
+                return ""
+        except Exception as e:
+            print(e)
+            return None
+
+    # get the schema of the data dynamically
+    def getSchema(self, path, query, key, param, spark, fnt_id):
+        # build the query to extract data from API
+        try:
+            if query == "":
+                q = (
+                    self.API_meta["API"]
+                    + self.API_meta["Endpoint"]
+                    + path
+                    + query
+                    + "?"
+                    + key
+                    + param
+                )
+            else:
+                q = (
+                    self.API_meta["API"]
+                    + self.API_meta["Endpoint"]
+                    + path
+                    + query
+                    + key
+                    + param
+                )
+            if self.API_meta["Auth_method"] != "OAuth 2.0":
+                if q[-1] == "?":
+                    q += auth_dict[fnt_id]
+                else:
+                    if auth_dict[fnt_id] != "":
+                        q += "&" + auth_dict[fnt_id]
+                response = requests.get(q, timeout=10)
+
+            else:
+                token = auth_dict[fnt_id]
+                headers = {"Authorization": f"Bearer {token}"}
+                response = requests.get(q, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                response = response.json()
+                if self.API_meta["Data"] == "NA":
+                    if not isinstance (response , list):
+                        response = [response]
+                    jsonData = {"data": response}
+                else:
+                    data = response[self.API_meta["Data"]]
+                    if not isinstance (data, list):
+                        data = [data]
+                    jsonData = {"data": data}
+
+                # convert the dictionary to json
+                jsonData = json.dumps(jsonData)
+                print(jsonData)
+                sc = SparkContext.getOrCreate()
+                # create dataframe from the json object
+                df = spark.read.json(sc.parallelize([jsonData]))
+                # get the dataframe schema
+                schema = df.schema
+                return schema
+
+            elif response.status_code == 404:
+                return "The link does not exist"
+            elif response.status_code == 204:
+                return "No content exisits in the link"
+            else:
+                print(q)
+                return f"Error accessing the query link {response.status_code}"
+        except Exception as e:
+            print(e)
+            return "Error accessing the query link"
+
+
+-----------------------------------------------------------------------
+
+02.F_apiconfigs.py
+
+class DBMetaDataReader:
+    def __init__(self, dbcon):
+        self.con = dbcon
+
+    def fn_get_api_metadata(self, fnt_id):
+        try:
+            statement = f"""EXEC dbo.sp_get_api_metadata @fntid={fnt_id}"""
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            resultSet = exec_statement.getResultSet()
+            result_dict = []
+            while resultSet.next():
+                vals = {}
+                vals["API_id"] = resultSet.getString("API_id")
+                vals["API"] = resultSet.getString("API")
+                vals["Endpoint"] = resultSet.getString("Endpoint")
+                vals["EP_Param"] = resultSet.getString("EP_Param")
+                vals["Path"] = resultSet.getString("Path")
+                vals["Pagination_Method"] = resultSet.getString("Pagination_Method")
+                vals["Pagination_Param"] = resultSet.getString("Pagination_Param")
+                vals["Variable_page_size"] = resultSet.getString("Variable_page_size")
+                vals["No_of_pages"] = resultSet.getString("No_of_pages")
+                vals["First_page"] = resultSet.getString("First_page")
+                vals["Items_per_EP"] = resultSet.getString("Items_per_EP")
+                vals["keys"] = resultSet.getString("keys")
+                vals["max_per_call"] = resultSet.getString("max_per_call")
+                vals["Auth_method"] = resultSet.getString("Auth_method")
+                vals["Auth_val"] = resultSet.getString("Auth_val")
+                vals["Data"] = resultSet.getString("Data")
+                vals["Timeframe"] = resultSet.getString("Timeframe")
+                vals["Timeframe_cur"] = resultSet.getString("Timeframe_cur")
+                vals["Timeframe_next"] = resultSet.getString("Timeframe_next")
+                vals["DateTimeFormat"] = resultSet.getString("DateTimeFormat")
+                vals["scope"] = resultSet.getString("scope")
+                vals["redirect_url"] = resultSet.getString("redirect_url")
+                vals["authorization_base_url"] = resultSet.getString(
+                    "authorization_base_url"
+                )
+                vals["token_url"] = resultSet.getString("token_url")
+                vals["output_path"] = resultSet.getString("output_path")
+
+                result_dict.append(vals)
+            # Close connections
+            exec_statement.close()
+            # self.con.close()
+            return result_dict
+        except Exception as e:
+            print(e)
+
+    def fn_update_connector_logs(self, job_run_id, row_count, file_path):
+        try:
+            statement = f"""EXEC dbo.sp_update_connector_logs @job_run_id='{job_run_id}', @row_count={row_count}, @filepath='{file_path}'"""
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            exec_statement.close()
+        except Exception as e:
+            print(statement)
+            print(e)
+
+    def fn_insert_connector_logs(self, job_run_id, fk_fnt_id):
+        try:
+            statement = f"""EXEC dbo.sp_insert_connector_logs @job_run_id='{job_run_id}', @fk_fnt_id={fk_fnt_id}"""
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            exec_statement.close()
+        except Exception as e:
+            print(statement)
+            print(e)
+
+
+-----------------------------------------------------------------------
+
+03. F_Authentication.py
+
+from F_RefreshToken import RefreshToken
+from pyspark.dbutils import DBUtils
+
+
+def get_dbutils(spark):
+    try:
+        # from pyspark.dbutils import DBUtils
+        # from pyspark import DBUtils
+
+        dbutils = DBUtils(spark)  # noqa: F821
+    except ImportError:
+        import IPython
+
+        dbutils = IPython.get_ipython().user_ns["dbutils"]  # noqa: F821
+    return dbutils  # noqa: F821
+
+
+class Authentication:
+    def __init__(self, API_meta, spark, fnt_id):
+        self.API_meta = API_meta
+        self.spark = spark
+        self.fnt_id = fnt_id
+
+    # check the type of authentication of the api
+    def getAuth(self):
+        try:
+            if self.API_meta["Auth_method"] == "API Keys":
+                apikey = self.getAPIKey()
+                return self.API_meta["Auth_val"] + "=" + apikey
+                # print(self.API_meta["Auth_val"])
+            elif self.API_meta["Auth_method"] == "OAuth 2.0":
+                return self.getOauth()
+            else:
+                return ""
+        except Exception as e:
+            print("Authentication.py getAuth()")
+            print(e)
+            return None
+
+    # process all apis with key-based authentication
+    def getAPIKey(self):
+        try:
+            dbutils = get_dbutils(self.spark)  # noqa: F821
+            keyname = "apikey-" + str(self.fnt_id)
+            print("Keyname", keyname)
+            accesskey = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key=keyname)  # noqa: F821
+            # print('accesskey',accesskey)
+            return accesskey
+        except Exception as e:
+            print("Authentication.py getAPIKey()")
+            print(e)
+            return None
+
+    # process all apis with token or oauth 2 based authnetication
+    def getOauth(self):
+        try:
+            dbutils = get_dbutils(self.spark)  # noqa: F821
+            print(dbutils)  # noqa: F821
+            refresh = RefreshToken(self.API_meta, self.spark, self.fnt_id)
+            token = refresh.refreshtoken()
+            return token
+        except Exception as e:
+            print("Authentication.py getOAuth()")
+            print(e)
+            return None
+-------------------------------------------------------------------------------------
+
+
+04.F_AuthenticationDictionary.py
+
+auth_dict = {}
+
+-------------------------------------------------------------------------
+
+
+05. F_NoPagination.py
+
+from F_AuthenticationDictionary import auth_dict
+from F_AccessoryFunctions import AccessoryFunctions
+import requests
+import json
+from pyspark.sql.functions import udf, col
+
+# from pyspark.sql.types import  *
+from pyspark.sql import Row
+
+
+# function where the actual data extraction happens
+def API_NoPage(API_meta, path, key, param, auth_dict, fnt_id):
+    try:
+        # build the query
+        base_q = API_meta["API"] + API_meta["Endpoint"] + path + "?"
+        if key != "":
+            base_q += key
+        if param != "":
+            if base_q[-1] != "?":
+                base_q += "&" + param
+            else:
+                base_q += param
+
+        # based on authentication method make the request call
+        if API_meta["Auth_method"] != "NA" and API_meta["Auth_method"] != "OAuth 2.0":
+            if base_q[-1] != "?":
+                base_q += "&" + auth_dict[fnt_id]
+            else:
+                base_q += auth_dict[fnt_id]
+        if API_meta["Auth_method"] == "OAuth 2.0":
+            token = auth_dict[fnt_id]
+            headers = {"Authorization": f"Bearer {token}"}
+            response = requests.get(base_q, headers=headers, timeout=5)
+        else:
+            response = requests.get(base_q, timeout=5)
+
+        # if the request call returned valid data
+        if response.status_code == 200:
+            if API_meta["Data"] != "NA":
+                json_dict = json.loads(response.text)
+                val = json_dict[API_meta["Data"]]
+                if not isinstance(val,list):
+                    val = [val]
+                data = {"data": val}
+                return data
+            else:
+                data = json.loads(response.text)
+                if not isinstance(data,list):
+                    data = [data]
+                data = {"data": data}
+                return data
+    except Exception as e:
+        print(e)
+        return None
+
+
+class NoPagination:
+    def __init__(self, API_meta, spark):
+        self.API_meta = API_meta
+        self.spark = spark
+
+    # extract offset pagination data
+    def getNoPaginationData(self, requestAPIdf, schema):
+        try:
+            # get the data with udf
+            udf_page = udf(API_NoPage, schema)
+            df = requestAPIdf.withColumn(
+                "data",
+                udf_page(
+                    col("meta"),
+                    col("path"),
+                    col("key"),
+                    col("param"),
+                    col("auth_dict"),
+                    col("fnt_id"),
+                ),
+            )
+            return df
+        except Exception as e:
+            print(e)
+            return None
+
+    def NoPaginationHead(self, fnt_id):
+        try:
+            # create dataframe to pass rows as parameters for udf
+            requestAPI = Row("meta", "path", "key", "param", "auth_dict", "fnt_id")
+            metapage = []
+
+            # get all the details from the metadata for building the query
+            func = AccessoryFunctions(self.API_meta)
+            path = func.getPath()
+            key = func.getKey()
+            param = func.getParam()
+            # time = func.getDateTime()
+
+            # if param == "":
+            #     param = time
+            # elif time != "":
+            #     param += "&" + time
+
+            metapage.append(
+                requestAPI(self.API_meta, path, key, param, auth_dict, fnt_id)
+            )
+            requestAPIdf = self.spark.createDataFrame(metapage)
+
+            # get the data schema
+            if param != "":
+                schema = func.getSchema(path, "", key, "&" + param, self.spark, fnt_id)
+            else:
+                schema = func.getSchema(path, "", key, param, self.spark, fnt_id)
+
+            # if schema function returns an error
+            if isinstance(schema,str):
+                return schema
+            else:
+                finalAPIdata = self.getNoPaginationData(requestAPIdf, schema)
+                return finalAPIdata
+        except Exception as e:
+            print(e)
+
+
+
+------------------------------------------------------------------------------------
+
+
+06.F_OffsetPagination.py
+
+from F_AuthenticationDictionary import auth_dict
+from F_AccessoryFunctions import AccessoryFunctions
+import requests
+import json
+from pyspark.sql.functions import udf, col
+
+# from pyspark.sql.functions import explode_outer, explode
+# from pyspark.sql import functions as sf
+from pyspark.sql import Row
+import sys
+
+
+# function where the actual data extraction happens
+def API_Offset(API_meta, offset, path, limit, key, param, auth_dict, fnt_id):
+    try:
+        # build the query
+        p_param = API_meta["Pagination_Param"].split(",")
+        offset_param = p_param[0]
+        limit_param = p_param[1]
+        query = (
+            API_meta["API"]
+            + API_meta["Endpoint"]
+            + path
+            + "?"
+            + offset_param
+            + "="
+            + str(offset)
+            + "&"
+            + limit_param
+            + "="
+            + str(limit)
+        )
+        if key != "":
+            query += "&" + key
+        if param != "":
+            query += "&" + param
+
+        # based on authentication method make the request call
+        if API_meta["Auth_method"] != "NA" and API_meta["Auth_method"] != "OAuth 2.0":
+            query += "&" + auth_dict[fnt_id]
+        if API_meta["Auth_method"] == "OAuth 2.0":
+            token = auth_dict[fnt_id]
+            headers = {"Authorization": f"Bearer {token}"}
+            response = requests.get(query, headers=headers, timeout=5)
+        else:
+            response = requests.get(query, timeout=5)
+
+        # if the request call returned valid data
+        if response.status_code == 200:
+            if API_meta["Data"] != "NA":
+                json_dict = json.loads(response.text)
+                val = json_dict[API_meta["Data"]]
+                if not isinstance(val,list):
+                    val = [val]
+                data = {"data": val}
+                return data
+            else:
+                data = json.loads(response.text)
+                if not isinstance(data,list):
+                    data = [data]
+                data = {"data": data}
+                return data
+    except Exception as e:
+        print(e)
+        return None
+
+
+class OffsetPagination:
+    def __init__(self, API_meta, spark):
+        self.API_meta = API_meta
+        self.spark = spark
+
+    # get the start offset and limit (items per page)
+    def getOffsetLimit(self):
+        try:
+            vals = self.API_meta["Variable_page_size"].split(",")
+            start_offset, limit = int(vals[0]), int(vals[1])
+            return limit, start_offset
+        except Exception as e:
+            print(e)
+            print("offset error")
+            sys.exit()
+
+    # extract offset pagination data
+    def getOffsetPaginationData(self, requestAPIdf, schema):
+        try:
+            udf_page = udf(API_Offset, schema)
+
+            # repartition the dataframe to improve the processing speed
+            print("start extracting the data")
+            print("partition: ", requestAPIdf.rdd.getNumPartitions())
+            requestAPIdf = requestAPIdf.repartition(min(requestAPIdf.count(), 16000))
+            print("after partition: ", requestAPIdf.rdd.getNumPartitions())
+
+            # get the data with udf
+            df = requestAPIdf.withColumn(
+                "data",
+                udf_page(
+                    col("meta"),
+                    col("offset"),
+                    col("path"),
+                    col("limit"),
+                    col("key"),
+                    col("param"),
+                    col("auth_dict"),
+                    col("fnt_id"),
+                ),
+            )
+            return df
+        except Exception as e:
+            print(e)
+            return None
+
+    def OffsetPaginationHead(self, fnt_id):
+        try:
+            # create dataframe to pass rows as parameters for udf
+            requestAPI = Row(
+                "meta", "offset", "path", "limit", "key", "param", "auth_dict", "fnt_id"
+            )
+            metapage = []
+
+            # get all the details from the metadata for building the query
+            func = AccessoryFunctions(self.API_meta)
+            path = func.getPath()
+            key = func.getKey()
+            param = func.getParam()
+            time = func.getDateTime()
+
+            if param == "":
+                param = time
+            elif time != "":
+                param += "&" + time
+
+            # get start offset and limit
+            limit, offset = self.getOffsetLimit()
+            # 10, 0
+            if offset == -1:
+                print("offset limit error")
+                return None
+
+            # populate the requestAPI dataframe
+            # each of these rows corresponds to an API call's parameters
+            # all columns will have the same values in all rows
+            # only start offset number changes
+            while True:
+                metapage.append(
+                    requestAPI(
+                        self.API_meta,
+                        offset,
+                        path,
+                        limit,
+                        key,
+                        param,
+                        auth_dict,
+                        fnt_id,
+                    )
+                )
+                print(offset, limit)
+                offset += limit
+                # for the final calls when the limit is greater than total available
+                if (offset + limit) > int(func.API_meta["Items_per_EP"]):
+                    if offset < int(func.API_meta["Items_per_EP"]):
+                        metapage.append(
+                            requestAPI(
+                                self.API_meta,
+                                offset,
+                                path,
+                                (int(self.API_meta["Items_per_EP"]) - offset),
+                                key,
+                                param,
+                                auth_dict,
+                                fnt_id,
+                            )
+                        )
+                        break
+                    else:
+                        break
+
+            requestAPIdf = self.spark.createDataFrame(metapage)
+
+            # get the data schema
+            p_param = self.API_meta["Pagination_Param"].split(",")
+            offset = p_param[0]
+            limit = p_param[1]
+            query = "?" + offset + "=1" + "&" + limit + "=1"
+            if param != "":
+                schema = func.getSchema(
+                    path, query, key, "&" + param, self.spark, fnt_id
+                )
+            else:
+                schema = func.getSchema(path, query, key, param, self.spark, fnt_id)
+
+            # if schema function returns an error
+            if isinstance(schema,str):
+                return schema
+            else:
+                finalAPIdata = self.getOffsetPaginationData(requestAPIdf, schema)
+                return finalAPIdata
+        except Exception as e:
+            print(e)
+
+
+-------------------------------------------------------------------------------------
+
+
+07.F_PagePagination.py
+
+from F_AuthenticationDictionary import auth_dict
+from F_AccessoryFunctions import AccessoryFunctions
+import requests
+import json
+from pyspark.sql.functions import udf, col
+
+# from pyspark.sql.functions import explode_outer, explode
+# from pyspark.sql import functions as sf
+from pyspark.sql import Row
+import math as m
+import sys
+
+
+# function for actual data extraction
+def API_Page(API_meta, page, path, size, key, param, auth_dict, fnt_id):
+    try:
+        # build the query
+        base_q = (
+            API_meta["API"]
+            + API_meta["Endpoint"]
+            + path
+            + "?"
+            + API_meta["Pagination_Param"]
+            + "="
+            + str(page)
+        )
+        if size != "fixed":
+            query = base_q + "&" + API_meta["Variable_page_size"]
+        else:
+            query = base_q
+
+        if key != "":
+            query += "&" + key
+        if param != "":
+            query += "&" + param
+        if API_meta["Auth_method"] != "NA" and API_meta["Auth_method"] != "OAuth 2.0":
+            query += "&" + auth_dict[fnt_id]
+
+        # check authentication methods
+        # different methods have different query building and request type
+        if API_meta["Auth_method"] == "OAuth 2.0":
+            token = auth_dict[fnt_id]
+            headers = {"Authorization": f"Bearer {token}"}
+            # get the data
+            response = requests.get(query, headers=headers, timeout=5)
+            print("response")
+        else:
+            # get the data
+            response = requests.get(query, timeout=5)
+            print("response1")
+
+        # if it is a valid response
+        if response.status_code == 200:
+            # access the actual data if additional metadata in response
+            if API_meta["Data"] != "NA":
+                # convert data to json format
+                json_dict = json.loads(response.text)
+                val = json_dict[API_meta["Data"]]
+                # if the data is not of list type
+                if not isinstance(val,list):
+                    val = [val]
+                # return a dictionary
+                data = {"data": val}
+                return data
+            # when no additional metadata in response
+            else:
+                data = json.loads(response.text)
+                if not isinstance(data,list):
+                    data = [data]
+                data = {"data": data}
+                return data
+    except Exception as e:
+        print(e)
+        return None
+
+
+class PagePagination:
+    def __init__(self, API_meta, spark):
+        self.API_meta = API_meta
+        self.spark = spark
+
+    # dynamically get the number of pages and items
+    def getTotalPagesItems(self):
+        try:
+            # in case variable page size is suppoted
+            if self.API_meta["Variable_page_size"] != "NA":
+                items = self.API_meta["Variable_page_size"].split("=")[1]
+                # ensure that the number of items per page given is valid
+                # if items.isdigit() != True:
+                if items.isdigit() is not True:
+                    print("Invalid")
+                    sys.exit()
+                else:
+                    items = int(items)
+                    # if items per page more than total items available
+                    if items > int(self.API_meta["Items_per_EP"]):
+                        print("Not sufficient number of items")
+                        sys.exit()
+                    # if items per page greater than the allowed items per page
+                    if int(self.API_meta["max_per_call"]) != -1:
+                        if items > int(self.API_meta["max_per_call"]):
+                            print("Exceeds max items per page")
+                            sys.exit()
+                if self.API_meta["Items_per_EP"] == -1:
+                    print("Cannot compute total pages")
+                    sys.exit()
+                total_pages = m.ceil(int(self.API_meta["Items_per_EP"]) / items)
+
+            # if items per page is fixed
+            else:
+                items = "fixed"
+                total_pages = int(self.API_meta["No_of_pages"])
+            return total_pages, items
+
+        except Exception as e:
+            print("page.py get total()")
+            print(e)
+            return None, None
+
+    def getPagePaginationData(self, requestAPIdf, schema):
+
+        try:
+            # build a udf with the schema and data extraction function
+            udf_page = udf(API_Page, schema)
+
+            print("partition: ", requestAPIdf.rdd.getNumPartitions())
+            # number of partitions equal to number of rows
+            # increases processing speed
+            requestAPIdf = requestAPIdf.repartition(min(requestAPIdf.count(), 16000))
+            print("after repartition: ", requestAPIdf.rdd.getNumPartitions())
+
+            # udf call and get the resulting data in the "data" column
+            df = requestAPIdf.withColumn(
+                "data",
+                udf_page(
+                    col("meta"),
+                    col("page"),
+                    col("path"),
+                    col("size"),
+                    col("key"),
+                    col("param"),
+                    col("auth_dict"),
+                    col("fnt_id"),
+                ),
+            )
+            return df
+
+        except Exception as e:
+            print(e)
+            print("page.py get data()")
+            return None
+
+    def PagePaginationHead(self, fnt_id):
+        try:
+            # create dataframe to pass rows as parameters for udf
+            requestAPI = Row(
+                "meta", "page", "path", "size", "key", "param", "auth_dict", "fnt_id"
+            )
+            metapage = []
+
+            print(self.API_meta)
+
+            # get all the details from the metadata for building the query
+            func = AccessoryFunctions(self.API_meta)
+            path = func.getPath()
+            key = func.getKey()
+            print(key)
+            param = func.getParam()
+            print(param)
+            #time = func.getDateTime()
+            #print(time)
+
+            # if param == "":
+            #     param = time
+            # elif time != "":
+            #     param += "&" + time
+
+            # get total pages and items per page
+            total_pages, items = self.getTotalPagesItems()
+
+            # populate the requestAPI dataframe
+            # each of these rows corresponds to an API call's parameters
+            # all columns will have the same values in all rows
+            # only page number changes
+            for page in range(int(self.API_meta["First_page"]), total_pages):
+                metapage.append(
+                    requestAPI(
+                        self.API_meta, page, path, items, key, param, auth_dict, fnt_id
+                    )
+                )
+            requestAPIdf = self.spark.createDataFrame(metapage)
+            query = "?" + self.API_meta["Pagination_Param"] + "=1"
+
+            # extract the schema
+            if param != "":
+                schema = func.getSchema(
+                    path, query, key, "&" + param, self.spark, fnt_id
+                )
+            else:
+                schema = func.getSchema(path, query, key, param, self.spark, fnt_id)
+
+            # if schema function returned an error
+            if isinstance(schema, str):
+                return schema
+            else:
+                # extract data from the requestapidf dataframe
+                finalAPIdata = self.getPagePaginationData(requestAPIdf, schema)
+                return finalAPIdata
+        except Exception as e:
+            print("page.py head()")
+            print(e)
+
+
+-------------------
+
+08.F_RefreshToken.py
+
+import requests
+import base64
+import os
+
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+
+def get_dbutils(spark):
+    try:
+        from pyspark.dbutils import DBUtils
+
+        dbutils = DBUtils(spark)  # noqa: F821
+    except ImportError:
+        import IPython
+
+        dbutils = IPython.get_ipython().user_ns["dbutils"]  # noqa: F821
+    return dbutils  # noqa: F821
+
+
+class RefreshToken:
+    def __init__(self, API_meta, spark, fnt_id):
+        self.API_meta = API_meta
+        self.spark = spark
+        self.fnt_id = fnt_id
+
+    def refreshtoken(self):
+        try:
+            dbutils = get_dbutils(self.spark)  # noqa: F821
+
+            # get the refresh token, client id and client secret from key vault
+            #refresh_token_id = "api-oauth-token-" + str(self.fnt_id)
+            # refresh_token = dbutils.secrets.get(
+            #     scope="uppcl-smartmeter-adbscope", key=refresh_token_id
+            # )  # noqa: F821
+            client_id = "api-clientid-" + str(self.fnt_id)
+            clientidval = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key=client_id)  # noqa: F821
+            client_secret = "api-clientsecret-" + str(self.fnt_id)
+            clientsecret = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key=client_secret)  # noqa: F821
+
+            # client id needs to be displayed when printing the authorization url
+            # store client id with extra char in the beginning in keyvault
+            # and print after removing it
+            #clientid = clientidval[1:]
+
+            # get access token using the refresh token
+            #data = {"grant_type": "refresh_token", "refresh_token": refresh_token}
+            headers = {
+                "Authorization": f"Basic {base64.b64encode((clientidval + ':' + clientsecret).encode()).decode()}",
+            }
+            # new_token = requests.post(
+            #     self.API_meta["token_url"], data=data, headers=headers
+            # ).json()
+            new_token = requests.get(
+                self.API_meta["token_url"], headers=headers
+            ).json()
+
+            #return new_token["access_token"]
+            return new_token["id_token"]
+        
+        except Exception as e:
+            print("Exception")
+            print(e)
+            return None
+
+---------------------------------------------------------------------
+
+
+09.
+
+---------------------------------------------------------------------
+
+10.NB_API_Source.py
+
+# COMMAND ----------
+
+# MAGIC %sh
+# MAGIC pip install requests_oauthlib
+
+# COMMAND ----------
+
+import requests
+
+# import pandas as pd
+import json
+import math as m
+
+# import time
+import ast
+from datetime import datetime
+import numpy as np
+import re
+from requests_oauthlib import OAuth2Session
+from requests.auth import HTTPBasicAuth
+
+# import copy
+import os
+from pyspark import SparkSession
+from commonfunc.databaseconnect import DBconnection
+from F_DataGenerationScriptsFolder import apiconfigs
+from pyspark.sql.functions import udf, col
+
+# from pyspark.sql.functions import explode_outer, explode
+# from pyspark.sql import functions as sf
+from pyspark.sql import Row
+
+# from pyspark.sql.types import *
+# from collections.abc import MutableMapping
+
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+# Databricks notebook source
+global auth_dict
+auth_dict = {}
+
+# COMMAND ----------
+
+fnt_id = 117
+
+# COMMAND ----------
+
+"""config=  {
+    "1": {
+        "api_id": "1"
+    },
+
+    "2": {
+        "api_id":"2"
+    },
+    "3": {
+        "api_id":"3",
+        #country=us&year=2010
+        "path_param":"2009,us"
+    },
+    "4": {
+        "api_id":"4",
+        "path_param":"2010,us"
+    },
+    "5" : {
+        "api_id": "5",
+        "param_query": "embed",
+        "items": "10"
+    },
+    "6" : {
+        "api_id": "6",
+        "limit":"5",
+        "start_offset": "23800"
+    },
+    "7" : {
+        "api_id":"7",
+        "key": "name=karuna"
+    },
+    "8" : {
+        "api_id": "8",
+        "key":"country=us&year=2020"
+    },
+    "9": {
+        "api_id" :9
+    }
+}"""
+
+# COMMAND ----------
+
+# dbasecon=Dtbaseconnect(database='FOF_config-db_Copy_SSC',server='sql-dia-fof-dev-01.database.windows.net')
+# database='fof-prd-eus-sql-db'
+# server='fof-prd-eus-sql-server.database.windows.net:1433'
+
+spark = (
+    SparkSession.builder.appName("integrity-tests")
+    .config("spark.sql.legacy.timeParserPolicy", "EXCEPTION")
+    .getOrCreate()
+)
+spark.conf.set("spark.sql.legacy.timeParserPolicy", "EXCEPTION")
+spark.conf.set("spark.sql.shuffle.partitions", "auto")
+server = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key="dbendpoint")  # noqa: F821
+database = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key="databasename")  # noqa: F821
+spark1 = (
+    SparkSession.builder.appName("integrity-tests")
+    .config("spark.sql.legacy.timeParserPolicy", "EXCEPTION")
+    .getOrCreate()
+)
+source_dl_layer = "Bronze"
+dest_dl_layer = "Silver"
+dbasecon = DBconnection(database=database, server=server, spark1=spark1)
+con = dbasecon.fn_get_connection()
+api_obj = apiconfigs.DBMetaDatRreader(con)
+
+# COMMAND ----------
+
+
+def getOauth(API_meta):
+    scope = ast.literal_eval(API_meta["scope"])
+    if fnt_id not in auth_dict:
+        client_id = "api-clientid-" + str(fnt_id)
+        clientid = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key=client_id)  # noqa: F821
+        client_secret = "api-clientsecret-" + str(fnt_id)
+        clientsecret = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key=client_secret)  # noqa: F821
+        clientid_val = ""
+        for i in range(1, len(clientid)):
+            clientid_val += clientid[i]
+
+        oauth = OAuth2Session(
+            clientid_val, redirect_uri=API_meta["redirect_url"], scope=scope
+        )
+        authorization_url, state = oauth.authorization_url(
+            API_meta["authorization_base_url"]
+        )
+
+        print(f"Please go here and authorize: {authorization_url}")
+
+        redirect_response = input("Paste the full redirect URL here:")
+        auth = HTTPBasicAuth(clientid_val, clientsecret)
+        token = oauth.fetch_token(
+            API_meta["token_url"], auth=auth, authorization_response=redirect_response
+        )
+        token = token["access_token"]
+        return token
+    else:
+        return auth_dict[fnt_id]
+        print("Authorization already complete")
+
+
+# COMMAND ----------
+
+
+def getPath(API_meta):
+    if API_meta["Path"] != "NA":
+        params = API_meta["Path"].strip().split(",")
+        # take input for each path parameter
+        # params=config[API_meta["API_id"]]["path_param"].split(",")
+        path = "/" + "/".join(params)
+        # /2020/us
+    else:
+        path = ""
+    return path
+
+
+def getKey(API_meta):
+    if API_meta["keys"] != "NA":
+        # print("Compulsory keys: "+ API_meta["keys"])
+        key = API_meta["keys"]
+        if key == "":
+            print("Key cannot be empty")
+            quit()
+    else:
+        key = ""
+
+    return key
+
+
+def getParam(API_meta):
+
+    if API_meta["EP_Param"] != "NA":
+        # print("Optional Parameters: "+ API_meta["EP_Param"])
+        param_query = API_meta["EP_Param"]
+    else:
+        param_query = ""
+    return param_query
+
+
+def getAuth(API_meta):
+    if API_meta["Auth_method"] == "API Keys":
+        apikey = getAPIKey(fnt_id)
+        return API_meta["Auth_val"] + "=" + apikey
+
+    elif API_meta["Auth_method"] == "OAuth 2.0":
+        return getOauth(API_meta)
+    else:
+        return ""
+
+
+def getAPIKey(fnt_id):
+    keyname = "apikey-" + str(fnt_id)
+    accesskey = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key=keyname)  # noqa: F821
+    return accesskey
+
+
+def getDateTime(API_meta):
+
+    if API_meta["Timeframe"] != "":
+        t_param = API_meta["Timeframe"].strip().split(",")
+        API_meta["Timeframe_cur"] = re.sub(" ", ",", API_meta["Timeframe_cur"])
+        API_meta["Timeframe_next"] = re.sub(" ", ",", API_meta["Timeframe_next"])
+        x_cur = ast.literal_eval(API_meta["Timeframe_cur"])
+        x_next = ast.literal_eval(API_meta["Timeframe_next"])
+        dates_cur = [
+            datetime.strptime(date, API_meta["DateTimeFormat"]) for date in x_cur
+        ]
+        dates_next = [
+            datetime.strptime(date, API_meta["DateTimeFormat"]) for date in x_next
+        ]
+
+        if len(t_param) != len(dates_cur):
+            print("Metadata entry format not supported")
+            return "Metadata entry format not supported"
+
+        param = (
+            t_param[0]
+            + "="
+            + dates_cur[0].strftime(API_meta["DateTimeFormat"])
+            + "&"
+            + t_param[1]
+            + "="
+            + dates_cur[1].strftime(API_meta["DateTimeFormat"])
+        )
+
+        duration = dates_next[1] - dates_next[0]
+        gap = dates_next[0] - dates_cur[1]
+
+        dates_cur = dates_next
+        dates_next = [(dates_next[1] + gap), (dates_next[1] + duration + gap)]
+        converted_dates_cur = [
+            date.strftime(API_meta["DateTimeFormat"]) for date in dates_cur
+        ]
+        converted_dates_next = [
+            date.strftime(API_meta["DateTimeFormat"]) for date in dates_next
+        ]
+
+        API_meta["Timeframe_cur"] = str(np.array(converted_dates_cur))
+        API_meta["Timeframe_next"] = str(np.array(converted_dates_next))
+        for index in range(len(metadata_df)):
+            if metadata_df.loc[index, "API_id"] == int(API_meta["API_id"]):
+                metadata_df.at[index, "Timeframe_cur"] = converted_dates_cur
+                metadata_df.at[index, "Timeframe_next"] = converted_dates_next
+                break
+
+        return param
+    else:
+        return ""
+
+
+def getTotalPagesItems(API_meta):
+    if API_meta["Variable_page_size"] != "NA":
+        # print("Total Number of Items: ", (API_meta["Items_per_EP"]))
+        # print("Maximum Number of Items per page: ", (API_meta["max_per_call"]))
+        # items=config[API_meta["API_id"]]["items"]
+        items = API_meta["Variable_page_size"].split("=")[1]
+        # if items.isdigit() != True:
+        if items.isdigit() is not True:
+            print("Invalid")
+            quit()
+        else:
+            items = int(items)
+            if items > int(API_meta["Items_per_EP"]):
+                print("Not sufficient number of items")
+                quit()
+            if int(API_meta["max_per_call"]) != -1:
+                if items > int(API_meta["max_per_call"]):
+                    print("Exceeds max items per page")
+                    quit()
+        if API_meta["Items_per_EP"] == -1:
+            print("Cannot compute total pages")
+            quit()
+        total_pages = m.ceil(int(API_meta["Items_per_EP"]) / items)
+        """
+        return API_meta["Variable_page_size"] """
+
+    else:
+        items = "fixed"  # variable size
+        total_pages = int(API_meta["No_of_pages"])
+        # return ""
+    return total_pages, items
+
+
+# offset pagination
+def getOffsetLimit(API_meta):
+    # the limit remains fixed throughout
+    """if int(API_meta["max_per_call"])!=-1:
+        print("Maximum items per call: " + (API["max_per_call"]))
+
+
+    limit=config[API_meta["API_id"]]["limit"]
+    start_offset=config[API_meta["API_id"]]["start_offset"]
+    if limit.isdigit()!=True or start_offset.isdigit()!=True:
+        print("invalid inputs")
+        quit()
+    else:
+        if int(limit)>int(API_meta["Items_per_EP"]) or int(start_offset)>int(API_meta["Items_per_EP"]):
+            print("Exceeds the number of items available")
+            quit()
+        else:
+            return int(limit), int(start_offset)"""
+    try:
+        vals = API_meta["Variable_page_size"].split(",")
+        start_offset, limit = int(vals[0]), int(vals[1])
+        return start_offset, limit
+    except Exception as ex:
+        print("offset error")
+        print(ex)
+        quit()
+
+
+# COMMAND ----------
+
+
+def getSchema(API_meta, path, query, key, param):
+    if query == "":
+        q = API_meta["API"] + API_meta["Endpoint"] + path + query + "?" + key + param
+    else:
+        q = API_meta["API"] + API_meta["Endpoint"] + path + query + key + param
+        # print(q)
+
+    # try:
+    if API_meta["Auth_method"] != "OAuth 2.0":
+        if q[-1] == "?":
+            q += auth_dict[fnt_id]
+        else:
+            if auth_dict[fnt_id] != "":
+                q += "&" + auth_dict[fnt_id]
+        response = requests.get(q, timeout=10)
+
+    else:
+        token = auth_dict[fnt_id]
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(q, headers=headers, timeout=10)
+
+    if response.status_code == 200:
+        response = response.json()
+        if API_meta["Data"] == "NA":
+            if isinstance(type(response)) != list:
+                response = [response]
+            jsonData = {"data": response}
+        else:
+            data = response[API_meta["Data"]]
+            if isinstance(type(data)) != list:
+                data = [data]
+            jsonData = {"data": data}
+
+        jsonData = json.dumps(jsonData)
+        df = spark.read.json(sc.parallelize([jsonData]))
+        schema = df.schema
+        df.unpersist()
+        return schema
+
+    elif response.status_code == 404:
+        return "The link does not exist"
+    elif response.status_code == 204:
+        return "No content exisits in the link"
+    else:
+        print(q)
+        return f"Error accessing the query link {response.status_code}"
+
+
+# except:
+# return f"Error accessing the query link"
+# return "There was some error extract data during schema definition"
+
+# COMMAND ----------
+
+
+def API_Page(API_meta, page, path, size, key, param):
+
+    try:
+        base_q = (
+            API_meta["API"]
+            + API_meta["Endpoint"]
+            + path
+            + "?"
+            + API_meta["Pagination_Param"]
+            + "="
+            + str(page)
+        )
+        if size != "fixed":
+            # api/endpoint/{path}?page=1&size=10
+            query = base_q + "&" + API_meta["Variable_page_size"]
+        else:
+            # api/endpoint/{path}?page=1
+            query = base_q
+
+        if key != "":
+            # api/endpoint/{path}?page=1&key=abc
+            query += "&" + key
+        if param != "":
+            # api/endpoint/{path}?page=1&key=abc&param=1&param2=3
+            query += "&" + param
+        if API_meta["Auth_method"] != "NA" and API_meta["Auth_method"] != "OAuth 2.0":
+            # api/endpoint/{path}?page=1&key=abc&param=1&param2=3&api_key=suskey
+            query += "&" + auth_dict[fnt_id]
+    except Exception:
+        return "Error building query"
+
+    try:
+        if API_meta["Auth_method"] == "OAuth 2.0":
+            token = auth_dict[fnt_id]
+            headers = {"Authorization": f"Bearer {token}"}
+            response = requests.get(query, headers=headers, timeout=5)
+        else:
+            response = requests.get(query, timeout=5)
+
+        if response.status_code == 200:
+
+            if API_meta["Data"] != "NA":
+                json_dict = json.loads(response.text)
+                # {"page": 1, "data":[] }
+                val = json_dict[API_meta["Data"]]
+                if isinstance(type(val)) != list:
+                    val = [val]
+                data = {"data": val}
+                # {"data": ["key":"val"]}
+                return data
+            else:
+                data = json.loads(response.text)
+                if isinstance(type(data)) != list:
+                    data = [data]
+                data = {"data": data}
+                return data
+        return {"data": [{"msg": "Some issues in Page Pagination"}]}
+    except Exception:
+        return {"data": [{"msg": "Some issues in Page Pagination"}]}
+
+
+# COMMAND ----------
+
+
+def API_Offset(API_meta, offset, path, limit, key, param):
+
+    p_param = API_meta["Pagination_Param"].split(",")
+    offset_param = p_param[0]
+    limit_param = p_param[1]
+    # api/endpoint/{path}?offset=1&limit=10
+    query = (
+        API_meta["API"]
+        + API_meta["Endpoint"]
+        + path
+        + "?"
+        + offset_param
+        + "="
+        + str(offset)
+        + "&"
+        + limit_param
+        + "="
+        + str(limit)
+    )
+    if key != "":
+        # api/endpoint/{path}?offset=1&limit=10&key=abc
+        query += "&" + key
+    if param != "":
+        # api/endpoint/{path}?offset=1&limit=10&key=abc&param=2
+        query += "&" + param
+    if API_meta["Auth_method"] != "NA" and API_meta["Auth_method"] != "OAuth 2.0":
+        # api/endpoint/{path}?page=1&key=abc&param=1&param2=3&api_key=suskey
+        query += "&" + auth_dict[fnt_id]
+
+    try:
+        if API_meta["Auth_method"] == "OAuth 2.0":
+            token = auth_dict[fnt_id]
+            headers = {"Authorization": f"Bearer {token}"}
+            response = requests.get(query, headers=headers, timeout=5)
+        else:
+            response = requests.get(query, timeout=5)
+
+        if response.status_code == 200:
+            if API_meta["Data"] != "NA":
+                json_dict = json.loads(response.text)
+                val = json_dict[API_meta["Data"]]
+                if isinstance(type(val)) != list:
+                    val = [val]
+                data = {"data": val}
+                return data
+                # return val
+            else:
+                data = json.loads(response.text)
+                if isinstance(type(data)) != list:
+                    data = [data]
+                data = {"data": data}
+                return data
+
+        else:
+            return None
+    except Exception:
+        return None
+
+
+# COMMAND ----------
+
+
+def API_NoPage(API_meta, path, key, param):
+    # api/endpoint/{path}?
+    base_q = API_meta["API"] + API_meta["Endpoint"] + path + "?"
+    if key != "":
+        base_q += key
+    if param != "":
+        if base_q[-1] != "?":
+            base_q += "&" + param
+        else:
+            base_q += param
+
+    if API_meta["Auth_method"] != "NA" and API_meta["Auth_method"] != "OAuth 2.0":
+        # api/endpoint/{path}?page=1&key=abc&param=1&param2=3&api_key=suskey
+        if base_q[-1] != "?":
+            base_q += "&" + auth_dict[fnt_id]
+        else:
+            base_q += auth_dict[fnt_id]
+
+    try:
+        if API_meta["Auth_method"] == "OAuth 2.0":
+            token = auth_dict[fnt_id]
+            headers = {"Authorization": f"Bearer {token}"}
+            response = requests.get(base_q, headers=headers, timeout=5)
+        else:
+            response = requests.get(base_q, timeout=5)
+
+        if response.status_code == 200:
+            if API_meta["Data"] != "NA":
+                json_dict = json.loads(response.text)
+                val = json_dict[API_meta["Data"]]
+                if isinstance(type(val)) != list:
+                    val = [val]
+                data = {"data": val}
+                return data
+            else:
+                data = json.loads(response.text)
+                if isinstance(type(data)) != list:
+                    data = [data]
+                data = {"data": data}
+                return data
+        else:
+            return None
+    # except:
+    except Exception:
+        return None
+
+
+# COMMAND ----------
+
+
+def getPagePaginationData(API_meta, requestAPIdf, schema):
+    if API_meta["API_id"] == "1":
+        udf_page = udf(API_Page, schema)
+        df = requestAPIdf.withColumn(
+            "data",
+            udf_page(
+                col("meta"),
+                col("page"),
+                col("path"),
+                col("size"),
+                col("key"),
+                col("param"),
+            ),
+        )
+        df = df.drop("meta", "page", "path", "size", "key", "param")
+        # df=explodeDataAPI1()
+        return df
+    elif API_meta["API_id"] == "2":
+        udf_page = udf(API_Page, schema)
+        df = requestAPIdf.withColumn(
+            "data",
+            udf_page(
+                col("meta"),
+                col("page"),
+                col("path"),
+                col("size"),
+                col("key"),
+                col("param"),
+            ),
+        )
+        df = df.drop("meta", "page", "path", "size", "key", "param")
+        return df
+    elif API_meta["API_id"] == "5":
+        udf_page = udf(API_Page, schema)
+        df = requestAPIdf.withColumn(
+            "data",
+            udf_page(
+                col("meta"),
+                col("page"),
+                col("path"),
+                col("size"),
+                col("key"),
+                col("param"),
+            ),
+        )
+        df = df.drop("meta", "page", "path", "size", "key", "param")
+        return df
+    else:
+        return "not yet defined"
+
+
+# COMMAND ----------
+
+
+def getOffsetPaginationData(API_meta, requestAPIdf, schema):
+
+    if API_meta["API_id"] == "6":
+        udf_page = udf(API_Offset, schema)
+        df = requestAPIdf.withColumn(
+            "data",
+            udf_page(
+                col("meta"),
+                col("offset"),
+                col("path"),
+                col("limit"),
+                col("key"),
+                col("param"),
+            ),
+        )
+        df = df.drop("meta", "path", "param", "offset", "limit", "key")
+        return df
+    else:
+        return "not yet defined"
+
+
+# COMMAND ----------
+
+
+def getNoPaginationData(API_meta, requestAPIdf, schema):
+    if API_meta["API_id"] == "3":
+        udf_page = udf(API_NoPage, schema)
+        df = requestAPIdf.withColumn(
+            "data", udf_page(col("meta"), col("path"), col("key"), col("param"))
+        )
+        df = df.drop("meta", "path", "key", "param")
+        return df
+
+    elif API_meta["API_id"] == "4":
+        udf_page = udf(API_NoPage, schema)
+        df = requestAPIdf.withColumn(
+            "data", udf_page(col("meta"), col("path"), col("key"), col("param"))
+        )
+        df = df.drop("meta", "path", "key", "param")
+        return df
+    elif API_meta["API_id"] == "7":
+        udf_page = udf(API_NoPage, schema)
+        df = requestAPIdf.withColumn(
+            "data", udf_page(col("meta"), col("path"), col("key"), col("param"))
+        )
+        df = df.drop("meta", "path", "key", "param")
+        return df
+    elif API_meta["API_id"] == "8":
+        udf_page = udf(API_NoPage, schema)
+        df = requestAPIdf.withColumn(
+            "data", udf_page(col("meta"), col("path"), col("key"), col("param"))
+        )
+        df = df.drop("meta", "path", "key", "param")
+        return df
+    elif API_meta["API_id"] == "9":
+        udf_page = udf(API_NoPage, schema)
+        df = requestAPIdf.withColumn(
+            "data", udf_page(col("meta"), col("path"), col("key"), col("param"))
+        )
+        df = df.drop("meta", "path", "key", "param")
+        return df
+    else:
+        return "not yet defined"
+
+
+# COMMAND ----------
+
+
+def PagePaginationHead(API_meta):
+    # define the structure for the requestDF
+    requestAPI = Row("meta", "page", "path", "size", "key", "param")
+    metapage = []
+    # parameterized paths ex: api/endpoint/{param1}/{param2}/?{query=value}/startAt=20june
+    path = getPath(API_meta)
+    key = getKey(API_meta)
+    param = getParam(API_meta)
+    time = getDateTime(API_meta)
+    if param == "":
+        param = time
+    elif time != "":
+        param += "&" + time
+    # check if pagination allows variable number of pages based on size
+    total_pages, items = getTotalPagesItems(API_meta)
+    # run for loop to populate that dataframe
+    for page in range(int(API_meta["First_page"]), 5):
+        if items != "fixed" and page == total_pages:
+            items = int(API_meta["Items_per_EP"]) - ((page - 1) * items)
+        metapage.append(requestAPI(API_meta, page, path, items, key, param))
+    requestAPIdf = spark.createDataFrame(metapage)
+    query = "?" + API_meta["Pagination_Param"] + "=1"
+
+    if param != "":
+        schema = getSchema(API_meta, path, query, key, "&" + param)
+    else:
+        schema = getSchema(API_meta, path, query, key, param)
+
+    if isinstance(type(schema)) == str:
+        return schema
+    else:
+        finalAPIdata = getPagePaginationData(API_meta, requestAPIdf, schema)
+        return finalAPIdata
+
+
+# COMMAND ----------
+
+
+def OffsetPaginationHead(API_meta):
+    # define the structure for the requestDF
+    requestAPI = Row("meta", "offset", "path", "limit", "key", "param")
+    metapage = []
+    # parameterized paths ex: api/endpoint/{param1}/{param2}/?{query=value}
+    path = getPath(API_meta)
+    key = getKey(API_meta)
+    param = getParam(API_meta)
+    time = getDateTime(API_meta)
+    if param == "":
+        param = time
+    elif time != "":
+        param += "&" + time
+    limit, offset = getOffsetLimit(API_meta)
+
+    if offset == -1:
+        print("offset limit error")
+        return None
+
+    while True:
+        metapage.append(requestAPI(API_meta, offset, path, limit, key, param))
+        offset += limit
+        if (offset + limit) > int(API_meta["Items_per_EP"]):
+            if offset < int(API_meta["Items_per_EP"]):
+                metapage.append(
+                    requestAPI(
+                        API_meta,
+                        offset,
+                        path,
+                        (int(API_meta["Items_per_EP"]) - offset),
+                        key,
+                        param,
+                    )
+                )
+                break
+            else:
+                break
+
+    requestAPIdf = spark.createDataFrame(metapage)
+    p_param = API_meta["Pagination_Param"].split(",")
+    offset = p_param[0]
+    limit = p_param[1]
+
+    query = "?" + offset + "=1" + "&" + limit + "=1"
+    if param != "":
+        schema = getSchema(API_meta, path, query, key, "&" + param)
+    else:
+        schema = getSchema(API_meta, path, query, key, param)
+
+    if isinstance(type(schema)) == str:
+        return schema
+    else:
+        finalAPIdata = getOffsetPaginationData(API_meta, requestAPIdf, schema)
+        return finalAPIdata
+
+
+# COMMAND ----------
+
+
+def NoPaginationHead(API_meta):
+    requestAPI = Row("meta", "path", "key", "param")
+    metapage = []
+    # parameterized paths ex: api/endpoint/{param1}/{param2}/?{query=value}
+    path = getPath(API_meta)
+    key = getKey(API_meta)
+    param = getParam(API_meta)
+    time = getDateTime(API_meta)
+    if param == "":
+        param = time
+    elif time != "":
+        param += "&" + time
+    metapage.append(requestAPI(API_meta, path, key, param))
+    requestAPIdf = spark.createDataFrame(metapage)
+
+    if param != "":
+        schema = getSchema(API_meta, path, "", key, "&" + param)
+    else:
+        schema = getSchema(API_meta, path, "", key, param)
+    if isinstance(type(schema)) == str:
+        return schema
+    else:
+        finalAPIdata = getNoPaginationData(API_meta, requestAPIdf, schema)
+        return finalAPIdata
+
+
+# COMMAND ----------
+
+
+def APIDataExtraction():
+    # for api_id, vals in config.items():
+
+    API_meta = api_obj.fn_get_api_metadata(fnt_id)[0]
+    print("API: " + API_meta["API_id"])
+
+    auth_dict[fnt_id] = getAuth(API_meta)
+
+    if isinstance(type(API_meta)) == str:
+        print(API_meta)
+    else:
+        if API_meta["Pagination_Method"] == "Pages":
+            df = PagePaginationHead(API_meta)
+        elif API_meta["Pagination_Method"] == "Offset":
+            df = OffsetPaginationHead(API_meta)
+        elif API_meta["Pagination_Method"] == "NA":
+            df = NoPaginationHead(API_meta)
+        else:
+            print("not defined yet")
+
+        if isinstance(type(df)) != str:
+            df2 = df.select("data.*")
+            df2 = (
+                df2.selectExpr("*", "explode(data)")
+                .select("*", "col.*")
+                .drop("data", "col")
+            )
+            df2.display()
+            """
+                    save_location= "dbfs:/mnt/landing/APIMetadata/IN/"
+                    parquet_location = save_location+"temp"
+                    file_location = save_location+"API_"+API_meta["API_id"]+'.parquet'
+
+                    df2.coalesce(1).write.parquet(path=parquet_location, mode="append")
+
+                    file = dbutils.fs.ls(parquet_location)[-1].path  # noqa: F821
+                    dbutils.fs.cp(file, file_location)  # noqa: F821
+                    dbutils.fs.rm(parquet_location, recurse=True)"""  # noqa: F821
+
+        else:
+            print(df)
+
+
+# COMMAND ----------
+
+APIDataExtraction()
+
+# COMMAND ----------
+
+---------------------------------------------------------------
+11.NB_GetToken.py
+# COMMAND ----------
+
+# import requests
+import ast
+import os
+import spark
+from pyspark import SparkSession
+from commonfunc.databaseconnect import DBconnection
+from F_DataGenerationScriptsFolder import apiconfigs
+from requests_oauthlib import OAuth2Session
+from requests.auth import HTTPBasicAuth
+
+# Databricks notebook source
+fnt_id = 109
+
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+# COMMAND ----------
+
+spark.conf.set("spark.sql.legacy.timeParserPolicy", "EXCEPTION")
+spark.conf.set("spark.sql.shuffle.partitions", "auto")
+server = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key="dbendpoint")  # noqa: F821
+database = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key="databasename")  # noqa: F821
+spark1 = (
+    SparkSession.builder.appName("integrity-tests")
+    .config("spark.sql.legacy.timeParserPolicy", "EXCEPTION")
+    .getOrCreate()
+)
+source_dl_layer = "Bronze"
+dest_dl_layer = "Silver"
+dbasecon = DBconnection(database=database, server=server, spark1=spark1)
+con = dbasecon.fn_get_connection()
+api_obj = apiconfigs.DBMetaDatRreader(con)
+
+# COMMAND ----------
+
+# get the API metdata from the SQL table
+API_meta = api_obj.fn_get_api_metadata(fnt_id)[0]
+scope = ast.literal_eval(API_meta["scope"])
+
+# get the client id and the client secret from the keyvault
+client_id = "api-clientid-" + str(fnt_id)
+clientid = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key=client_id)  # noqa: F821
+client_secret = "api-clientsecret-" + str(fnt_id)
+clientsecret = dbutils.secrets.get(scope="uppcl-smartmeter-adbscope", key=client_secret)  # noqa: F821
+# client id needs to be displayed when printing the authorization url
+# store client id with extra char in the beginning in keyvault
+# and print after removing it
+clientid_val = clientid[1:]
+
+# create oauth2session object
+oauth = OAuth2Session(clientid_val, redirect_uri=API_meta["redirect_url"], scope=scope)
+# generate the authorization url
+authorization_url, state = oauth.authorization_url(API_meta["authorization_base_url"])
+
+print(f"Please go here and authorize: {authorization_url}")
+
+redirect_response = input("Paste the full redirect URL here:")
+
+# create http authentication object
+auth = HTTPBasicAuth(clientid_val, clientsecret)
+# fetch token using redirected response and authentication object
+token = oauth.fetch_token(
+    API_meta["token_url"], auth=auth, authorization_response=redirect_response
+)
+
+# COMMAND ----------
+
+# store the refresh token
+refresh_token = token["refresh_token"]
+refresh_token
+
+# COMMAND ----------
+
+----------------------------------------------------------------------------------------------------------------------------------
