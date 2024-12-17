@@ -1,0 +1,878 @@
+DB_to_Landing -Python files Part-A
+
+01.F_configs.py
+
+class metadatconfigs:
+    def __init__(self, fnt_id, con):
+        self.fnt_id = fnt_id
+        self.con = con
+
+    def fn_getdb_configs(self):
+        statement = f"""select *  from T_META_DB_Extract_configs where  FK_FNT_ID={self.fnt_id} """
+        print("statement is ", statement)
+        exec_statement = self.con.prepareCall(statement)
+        res = exec_statement.execute()
+        print(res)
+        resultSet = exec_statement.getResultSet()
+        dic = []
+        while resultSet.next():
+            vals = {}
+            vals["FK_FNT_ID"] = resultSet.getString("FK_FNT_ID")
+            vals["typeof_db"] = resultSet.getString("typeof_db")
+            dic.append(vals)
+        exec_statement.close()
+        return vals
+
+    def get_allconfigs(self):
+        dict1 = {}
+        dbconfigs = self.fn_getdb_configs()
+        dict1["db_extractconfigs"] = dbconfigs
+        return dict1
+
+---------------------------------------------
+
+02. F_dbcon.py
+
+import msal
+
+
+class azdbconnection:
+    def __init__(self, jdbcurl, jdbcUsername, jdbcPassword, jdbcdriver, session, credentialsFile, materializationDataset, parentProject,host,warehouse, database, schema, typeof_db):
+        self.jdbcurl = jdbcurl
+        self.username = jdbcUsername
+        self.password = jdbcPassword
+        self.driver = jdbcdriver
+        self.session = session
+        self.spark = session
+        self.credentialsFile = credentialsFile
+        self.materializationDataset = materializationDataset
+        self.parentProject = parentProject
+        self.typeof_db = typeof_db
+        self.host = host
+        self.warehouse =warehouse
+        self.database =database
+        self.schema =schema
+
+    def get_dbutils(self):
+        try:
+            from pyspark.dbutils import DBUtils
+
+            dbutils = DBUtils(self.spark)
+        except ImportError:
+            import IPython
+
+            dbutils = IPython.get_ipython().user_ns["dbutils"]
+        return dbutils
+
+    def fn_get_connection(self, scope="fof-prd-scope"):
+        # Set url & credentials
+        dbutils = self.get_dbutils()
+        tenant_id = dbutils.secrets.get(scope="fof-prd-scope", key="EDA-SPN-TenantId")
+        sp_client_id = dbutils.secrets.get(
+            scope="fof-prd-scope", key="EDA-SPN-ClientId"
+        )
+        sp_client_secret = dbutils.secrets.get(
+            scope="fof-prd-scope", key="EDA-SPN-ClientSecret"
+        )
+
+        url = self.jdbcurl
+
+        # Write your SQL statement as a string
+
+        # Generate an OAuth2 access token for service principal
+        authority = f"https://login.windows.net/{tenant_id}"
+        app = msal.ConfidentialClientApplication(
+            sp_client_id, sp_client_secret, authority
+        )
+        token = app.acquire_token_for_client(
+            scopes=["https://database.windows.net/.default"]
+        )["access_token"]
+
+        # Create a spark properties object and pass the access token
+        properties = self.spark._sc._gateway.jvm.java.util.Properties()
+        properties.setProperty("accessToken", token)
+
+        # Fetch the driver manager from your spark context
+        driver_manager = self.spark._sc._gateway.jvm.java.sql.DriverManager
+
+        # Create a connection object and pass the properties object
+        con = driver_manager.getConnection(url, properties)
+        return con, token
+
+    def source_con_string_token(self):
+        self.con1, self.token = self.fn_get_connection()
+
+    def desdb_con_string(self):
+        self.con, self.token = self.fn_get_connection()
+
+    def fn_read_parallel(
+        self, sql, numberOfPartitions, partitionColumn, lowerBound, upperBound
+    ):
+        try:
+            print(
+                "no of partition,lower bound,uppre bound,partition column is",
+                numberOfPartitions,
+                partitionColumn,
+                lowerBound,
+                upperBound,
+            )
+            if self.typeof_db == "mysql" or self.typeof_db == "postgres" or self.typeof_db == "azuresql":
+                jdbcDF = (
+                    self.session.read.format("jdbc")
+                    .option("url", self.jdbcurl)
+                    .option("dbtable", sql)
+                    .option("user", self.username)
+                    .option("password", self.password)
+                    .option("driver", self.driver)
+                    .option("numPartitions", numberOfPartitions)
+                    .option("partitionColumn", f"{partitionColumn}")
+                    .option("lowerBound", lowerBound)
+                    .option("upperBound", upperBound)
+                    .load()
+                )
+            elif self.typeof_db =="snowflake":
+                print('----------------------------------dbcon-----------------snowflake')
+                jdbcDF = self.session.read.format("snowflake") \
+                    .option("host", self.host) \
+                    .option("user", self.username) \
+                    .option("password", self.password) \
+                    .option("sfWarehouse", self.warehouse) \
+                    .option("database", self.database) \
+                    .option("schema", self.schema) \
+                    .option("query", sql) \
+                    .load()
+            else:
+                jdbcDF = self.session.read.format("bigquery") \
+                    .option("credentialsFile",self.credentialsFile) \
+                    .option("query", sql) \
+                    .option("materializationDataset", self.materializationDataset) \
+                    .option("parentProject", self.parentProject) \
+                    .option("numPartitions", numberOfPartitions ) \
+                    .option("partitionColumn", f"{partitionColumn}" ) \
+                    .option("lowerBound", lowerBound)\
+                    .option("upperBound", upperBound)\
+                    .load()    
+            print("partitions in df", jdbcDF.rdd.getNumPartitions())
+            return jdbcDF
+        except Exception as e:
+            print(e)
+
+    def fn_read(self, sql):
+        try:
+            if self.typeof_db == "mysql" or self.typeof_db == "postgres" or self.typeof_db == "azuresql":          
+                jdbcDF = self.session.read.format("jdbc") \
+                    .option("url",self.jdbcurl) \
+                    .option("dbtable", sql) \
+                    .option("user", self.username) \
+                    .option("password", self.password) \
+                    .option("driver", self.driver) \
+                    .load()
+            elif self.typeof_db =="snowflake":
+               jdbcDF = self.session.read.format("snowflake") \
+                    .option("host", self.host) \
+                    .option("user", self.username) \
+                    .option("password", self.password) \
+                    .option("sfWarehouse", self.warehouse) \
+                    .option("database", self.database) \
+                    .option("schema", self.schema) \
+                    .option("query", sql) \
+                    .load()
+            else:
+                jdbcDF = self.session.read.format("bigquery") \
+                    .option("credentialsFile",self.credentialsFile) \
+                    .option("query", sql) \
+                    .option("materializationDataset", self.materializationDataset) \
+                    .option("parentProject", self.parentProject) \
+                    .load()
+            return jdbcDF
+        except Exception as e:
+            print(e)
+
+    def fn_read_withSp(self, sql):
+        try:
+            jdbcDF = (
+                self.session.read.format("jdbc")
+                .option("url", self.jdbcurl)
+                .option("dbtable", sql)
+                .option("accessToken", self.token)
+                .option("hostNameInCertificate", "*.database.windows.net")
+                .option("driver", self.driver)
+                .load()
+            )
+            return jdbcDF
+        except Exception as e:
+            print(e)
+
+    def fn_write_parallel(
+        self, sql, numberOfPartitions, partitionColumn, lowerBound, upperBound, df
+    ):
+        try:
+            print(
+                "no of partition,lower bound,uppre bound,partition column is",
+                numberOfPartitions,
+                partitionColumn,
+                lowerBound,
+                upperBound,
+            )
+            print("jdbc url is ", self.jdbcurl)
+            print("tablename is", sql)
+            df.repartition(numberOfPartitions).write.mode("overwrite").format(
+                "jdbc"
+            ).option("url", self.jdbcurl).option("dbtable", sql).option(
+                "user", self.username
+            ).option(
+                "password", self.password
+            ).option(
+                "driver", self.driver
+            ).save()
+        except Exception as e:
+            print(e)
+
+    def fn_get_paths(self, sourcesystem_name, usecase_name, fnt_id, dllayer, pathtype):
+        try:
+            statement = f"""EXEC dbo.sp_get_Paths  @sourcesystem='{sourcesystem_name}',@usecase='{usecase_name}',@fnt={fnt_id},@dllayer='{dllayer}',@pathtype='{pathtype}'"""
+            print(statement)
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            resultSet = exec_statement.getResultSet()
+            while resultSet.next():
+                vals = {}
+                vals["path"] = resultSet.getString("path")
+
+            return vals
+            exec_statement.close()
+        except Exception as e:
+            print(e)
+
+    def fn_update_watermark(self, fnt_id, watermarkvalue):
+        try:
+            statement = f"""EXEC dbo.sp_update_watermark  @fntid={fnt_id},@watermarkvalue='{watermarkvalue}'"""
+            print(statement)
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            exec_statement.close()
+            return True, ""
+        except Exception as e:
+            return False, e
+
+    def fn_update_rowcount(self, fnt_id, job_id, rowcount):
+        try:
+            statement = f"""EXEC dbo.sp_update_db_delta_count  @fnt_id={fnt_id},@job_id='{job_id}',@row_count={rowcount}"""
+            print(statement)
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            exec_statement.close()
+            return True, ""
+        except Exception as e:
+            return False, e
+
+    def fn_insert_connector_logs(self, FNT_ID, jobId):
+        try:
+            statement = f"""EXEC dbo.sp_insert_connector_logs @fk_fnt_id={FNT_ID},@job_run_id='{jobId}'"""
+            print(statement)
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            exec_statement.close()
+            return True, ""
+        except Exception as e:
+            return False, e
+
+    def fn_update_connector_logs(
+        self, row_count, job_run_id, lastwatermark_value, final_path
+    ):
+        try:
+            statement = f"""EXEC dbo.sp_update_connector_logs_db @row_count={row_count},@job_run_id='{job_run_id}',@lastwatermark_value='{lastwatermark_value}',@filepath='{final_path}'"""
+            print(statement)
+            exec_statement = self.con.prepareCall(statement)
+            exec_statement.execute()
+            exec_statement.close()
+            return True, ""
+        except Exception as e:
+            return False, e
+
+
+---------------------------------------------------
+
+03. F_metadata_configs.py
+class waterMarkPreocessor:
+    def __init__(
+        self,
+        repDbConObj,
+        schemaName,
+        tableName,
+        waterMarkColumns,
+        lowWaterMark,
+        eolDbConObj,
+    ):
+        self.rep_db_con_obj = repDbConObj
+        self.schema_name = schemaName
+        self.table_name = tableName
+        self.list_of_wm_columns = waterMarkColumns
+        self.low_water_mark = lowWaterMark
+        self.eol_db_con = eolDbConObj
+
+        pass
+
+    def fn_formQuery(self):
+        # list_of_wm_columns=['created_date','updated_date']
+        # CONVERT(VARCHAR(30),cast(con.LastWaterMarkValue as datetime), 121)
+        expr = ",".join(
+            [
+                f"CONVERT(VARCHAR(30),cast(max({a}) as datetime), 121) as '{a}'"
+                for a in self.list_of_wm_columns
+            ]
+        )
+        print(f"max({expr})n")
+        print('schema_name',self.schema_name)
+        print('table_name',self.table_name)
+        sql = f"(select {expr} from {self.schema_name}.{self.table_name}) as qry  "
+        print("final sql is", sql)
+        return sql
+
+    def fn_get_low_watermark():
+        pass
+
+    def fn_get_high_watermark(self, sql):
+        data = self.eol_db_con.fn_read(sql)
+        return data
+
+    def fn_getcount_full(self):
+        print("inside")
+        # expr=" or ".join([f"({a}>='{low_wm}' and {a}<'{high_wm}')" for a in self.list_of_wm_columns])
+        # print(f"max({expr})n")
+        try:
+            sql = f"(select count(1) as cnt from {self.schema_name}.{self.table_name}) as qry  "
+            data = self.eol_db_con.fn_read(sql)
+            print(sql)
+            return data
+        except Exception as e:
+            print(e)
+
+    def fn_getcount_delta(self, high_wm, low_wm):
+        print("inside")
+        # low_wm=low_wm.strftime("%Y-%m-%d %H:%M:%S")
+        # high_wm=high_wm.strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            expr = " or ".join(
+                [
+                    f"({a}>'{low_wm}' and {a}<='{high_wm}')"
+                    for a in self.list_of_wm_columns
+                ]
+            )
+            print(f"max({expr})n")
+            sql = f"(select count(1) as cnt from {self.schema_name}.{self.table_name} where {expr}) as qry  "
+            data = self.eol_db_con.fn_read(sql)
+            print(sql)
+            return data
+        except Exception as e:
+            print(e)
+
+    def fn_form_qry_loadfromdb_full(self, lst_columns, parcolumn):
+        # expr=" or ".join([f"({a}>='{low_wm}' and {a}<'{high_wm}')" for a in self.list_of_wm_columns])
+        # print(f"max({expr})n")
+        try:
+            column_list = ",".join(lst_columns)
+            # sql=f"(select  ROW_NUMBER()over(order by {parcolumn}) as {parcolumn}_par,{column_list} from {self.schema_name}.{self.table_name} ) as qry  "
+            sql = f"(select  {column_list} from {self.schema_name}.{self.table_name} ) as qry  "
+            print("sql for fetrching", sql)
+            return sql
+        except Exception as e:
+            print(e)
+
+    def fn_form_qry_loadfromdb_delta(self, high_wm, low_wm, lst_columns, parcolumn):
+        try:
+            # low_wm=low_wm.strftime("%Y-%m-%d %H:%M:%S")
+            # high_wm=high_wm.strftime("%Y-%m-%d %H:%M:%S")
+            expr = " or ".join(
+                [
+                    f"({a}>'{low_wm}' and {a}<='{high_wm}')"
+                    for a in self.list_of_wm_columns
+                ]
+            )
+            print(f"max({expr})n")
+            column_list = ",".join(lst_columns)
+            # sql=f"(select  ROW_NUMBER()over(order by {parcolumn}) as {parcolumn}_par,  {column_list} from {self.schema_name}.{self.table_name} where {expr}) as qry  "
+            sql = f"(select    {column_list} from {self.schema_name}.{self.table_name} where {expr}) as qry  "
+            print("sql for fetrching", sql)
+            return sql
+        except Exception as e:
+            print(e)
+
+    def fn_getColumnMapping(self, processname):
+        try:
+            print("table name is", self.table_name)
+            # sql=f"(select tab.TableName,col.columnname from T_table_configs tab inner join T_table_columns col on tab.TableId=col.TableId where tab.TableName='{self.table_name}') as qry"
+            sql = f"(select tab.TableName,col.columnname from T_table_configs tab inner join T_table_columns col on tab.TableId=col.TableId  inner join T_process_table_mapping  \
+          tptm on tptm.tableId=tab.TableId inner join T_process_list pc on tptm.processId=pc.processId  \
+          where tab.TableName='{self.table_name}' and pc.ProcessName='{processname}') as qry"
+            data = self.rep_db_con_obj.fn_read(sql)
+            return data
+        except Exception as e:
+            print(e)
+
+-----------------------
+
+04. F_metadata_configs_updated.py
+
+class waterMarkPreocessor:
+    def __init__(
+        self,
+        repDbConObj,
+        schemaName,
+        tableName,
+        waterMarkColumns,
+        lowWaterMark,
+        eolDbConObj,
+        typeof_db,
+    ):
+        self.rep_db_con_obj = repDbConObj
+        self.schema_name = schemaName
+        self.table_name = tableName
+        self.list_of_wm_columns = waterMarkColumns
+        self.low_water_mark = lowWaterMark
+        self.eol_db_con = eolDbConObj
+        self.typeof_db = typeof_db
+        print("typeof_db_metadata_configs_updated", self.typeof_db)
+        pass
+
+    def fn_formQuery(self):
+        if self.typeof_db == "azuresql":
+            expr = ",".join(
+                [
+                    f"CONVERT(VARCHAR(30),cast(max({a}) as datetime), 121) as '{a}'"
+                    for a in self.list_of_wm_columns
+                ]
+            )
+        elif self.typeof_db == "mysql":
+            expr = ",".join(
+                [
+                    f"DATE_FORMAT(MAX({a}), '%Y-%m-%d %H:%i:%s') as '{a}'"
+                    for a in self.list_of_wm_columns
+                ]
+            )
+            print("expr", expr)
+        elif self.typeof_db == "postgres":
+            expr = ",".join(
+                [
+                    f"TO_CHAR(MAX({a}), 'YYYY-MM-DD HH24:MI:SS') as {a}"
+                    for a in self.list_of_wm_columns
+                ]
+            )
+        elif self.typeof_db == "bigquery":
+            expr=",".join(
+                [
+                    f"FORMAT_DATETIME('%Y-%m-%d %H:%M:%S',MAX({a})) as {a}"
+                     for a in self.list_of_wm_columns
+                ]
+            )
+        elif self.typeof_db =="snowflake":
+            expr=",".join(
+                [
+                    f"to_varchar(max(modified_date),'yyyy-mm-dd hh:mi:ss') as {a}"
+                     for a in self.list_of_wm_columns
+                ]
+            )
+        print(f"max({expr})n")
+        if self.typeof_db == 'azuresql' or  self.typeof_db == 'mysql' or self.typeof_db == 'postgres':
+            sql=f"(select {expr} from {self.schema_name}.{self.table_name}) as qry "
+        elif self.typeof_db == "bigquery" or self.typeof_db =='snowflake':
+            sql=f"(select {expr} from {self.schema_name}.{self.table_name})  "
+        #sql = f"(select {expr} from {self.schema_name}.{self.table_name}) as qry  "
+        print("final sql is", sql)
+        return sql
+
+    def fn_get_low_watermark(self):
+        """
+        This method is intentionally left empty.
+        """
+        pass
+
+    def fn_get_high_watermark(self, sql):
+        data = self.eol_db_con.fn_read(sql)
+        return data
+
+    def fn_getcount_full(self):
+        print("inside")
+        try:
+            if self.typeof_db == 'azuresql' or  self.typeof_db == 'mysql' or self.typeof_db == 'postgres':  
+                sql=f"(select count(1) as cnt from {self.schema_name}.{self.table_name}) as qry "
+            elif self.typeof_db == 'bigquery' or self.typeof_db =='snowflake':
+                sql=f"(select count(1) as cnt from {self.schema_name}.{self.table_name})   "
+            data=self.eol_db_con.fn_read(sql)
+            print(sql)
+            return data
+        except Exception as e:
+            print(e)
+
+    def fn_getcount_delta(self, high_wm, low_wm):
+        print("inside")
+        try:
+            expr = " or ".join(
+                [
+                    f"({a}>'{low_wm}' and {a}<='{high_wm}')"
+                    for a in self.list_of_wm_columns
+                ]
+            )
+            print(f"max({expr})n")
+            if self.typeof_db == 'azuresql' or  self.typeof_db == 'mysql' or self.typeof_db == 'postgres':  
+                sql=f"(select count(1) as cnt from {self.schema_name}.{self.table_name} where {expr}) as qry  "
+            elif self.typeof_db == 'bigquery' or self.typeof_db =='snowflake':
+                sql=f"(select count(1) as cnt from {self.schema_name}.{self.table_name} where {expr})   "
+            data=self.eol_db_con.fn_read(sql)
+            print(sql)
+            return data
+        except Exception as e:
+            print(e)
+
+    def fn_form_qry_loadfromdb_full(self, lst_columns):
+        print("inside fn_form_qry_loadfromdb_full")
+        try:
+            column_list = ",".join(lst_columns)
+            if self.typeof_db == 'azuresql' or  self.typeof_db == 'mysql' or self.typeof_db == 'postgres':
+                sql=f"(select  {column_list} from {self.schema_name}.{self.table_name} )  as qry "
+            elif self.typeof_db == 'bigquery' or self.typeof_db =='snowflake':
+                sql=f"(select  {column_list} from {self.schema_name}.{self.table_name} )   "
+            print('sql for fetrching',sql)
+            return sql
+        except Exception as e:
+            print(e)
+
+    def fn_form_qry_loadfromdb_delta(self, high_wm, low_wm, lst_columns):
+        try:
+            expr = " or ".join(
+                [
+                    f"({a}>'{low_wm}' and {a}<='{high_wm}')"
+                    for a in self.list_of_wm_columns
+                ]
+            )
+            print(f"max({expr})n")
+            column_list = ",".join(lst_columns)
+            if self.typeof_db == 'azuresql' or  self.typeof_db == 'mysql' or self.typeof_db == 'postgres':
+                sql=f"(select    {column_list} from {self.schema_name}.{self.table_name} where {expr}) as qry  "
+            elif self.typeof_db == 'bigquery' or self.typeof_db =='snowflake':
+                sql=f"(select    {column_list} from {self.schema_name}.{self.table_name} where {expr})  "
+
+            print('sql for fetrching',sql)
+            return sql
+        except Exception as e:
+            print(e)
+
+    def fn_getColumnMapping(self, processname):
+        try:
+            print("table name is", self.table_name)
+            if self.typeof_db == 'azuresql' or  self.typeof_db == 'mysql' or self.typeof_db == 'postgres':
+                sql=f"(select tab.TableName,col.columnname from T_table_configs tab inner join T_table_columns col on tab.TableId=col.TableId  inner join T_process_table_mapping  \
+                tptm on tptm.tableId=tab.TableId inner join T_process_list pc on tptm.processId=pc.processId  \
+                where tab.TableName='{self.table_name}' and pc.ProcessName='{processname}') as qry "
+            elif self.typeof_db == 'bigquery' or self.typeof_db =='snowflake':
+                sql=f"(select tab.TableName,col.columnname from T_table_configs tab inner join T_table_columns col on tab.TableId=col.TableId  inner join T_process_table_mapping  \
+                tptm on tptm.tableId=tab.TableId inner join T_process_list pc on tptm.processId=pc.processId  \
+                where tab.TableName='{self.table_name}' and pc.ProcessName='{processname}') "
+            data=self.rep_db_con_obj.fn_read(sql)
+            return data
+        except Exception as e:
+            print(e)
+
+----------------------------------------------------
+
+05.  F_mv_db_to_land.py
+
+from F_metadata_configs import waterMarkPreocessor
+from pyspark.sql.functions import greatest, col, to_timestamp
+from datetime import datetime
+
+
+class mv_db_to_lan:
+    def __init__(
+        self,
+        FNT_ID,
+        jobId,
+        filtered_data,
+        dbcon_obj,
+        src_dbcn,
+        list_wm_columns,
+        columndetails,
+        Folderpath,
+    ):
+        self.FNT_ID = FNT_ID
+        self.jobId = jobId
+        self.filtered_data = filtered_data
+        self.dbcon_obj = dbcon_obj
+        self.src_dbcn = src_dbcn
+        self.list_wm_columns = list_wm_columns
+        self.columndetails = columndetails
+        self.Folderpath = Folderpath
+
+    def mv_db_to_landing(self):
+        try:
+            self.dbcon_obj.fn_insert_connector_logs(self.FNT_ID, self.jobId)
+            lowwatermarkvalue = self.filtered_data["LastWaterMarkValue"]
+            print("lowwatermarkvalue", lowwatermarkvalue)
+            # filtered_data=configdata.filter(f"TableName=='{TableName}'").toPandas().T.to_dict()[0]
+            wmprcsr = waterMarkPreocessor(
+                repDbConObj=self.dbcon_obj,
+                schemaName=self.filtered_data["DBschemaname"],
+                tableName=self.filtered_data["SourceTableName"],
+                waterMarkColumns=self.list_wm_columns,
+                lowWaterMark=lowwatermarkvalue,
+                eolDbConObj=self.src_dbcn,
+            )
+            rowcount = 0
+            if self.filtered_data["DbLoadType"] == "full":
+                pass
+            elif (
+                self.filtered_data["DbLoadType"] == "merge"
+                or self.filtered_data["DbLoadType"] == "append"
+            ):
+                sql = wmprcsr.fn_formQuery()
+                print(sql)
+            data = wmprcsr.fn_get_high_watermark(sql)
+            print("data is", data.show())
+            if len(data.columns) <= 1:
+                maxdate = data.select(
+                    to_timestamp((col(data.columns[0])), "yyyy-MM-dd HH:mm:ss.SSS")
+                    .cast("string")
+                    .alias("greatest")
+                )
+            else:
+                maxdate = data.select(
+                    to_timestamp(
+                        greatest(*[col(a) for a in data.columns]),
+                        "yyyy-MM-dd HH:mm:ss.SSS",
+                    )
+                    .cast("string")
+                    .alias("greatest")
+                )
+            print("maxdate", maxdate.show())
+            high_wm = maxdate.rdd.collect()[0][0]
+            print("high wm ", high_wm)
+            print("lowwatermarkvalue wm ", lowwatermarkvalue)
+            column_list = self.columndetails.select("Expected_columnname")
+            list_of_columns = [row.Expected_columnname for row in column_list.collect()]
+            print(list_of_columns)
+            if self.filtered_data["DbLoadType"] == "full":
+                cnt = wmprcsr.fn_getcount_full()
+                rowcount = cnt.rdd.collect()[0][0]
+                load_sql = wmprcsr.fn_form_qry_loadfromdb_full(
+                    list_of_columns, self.filtered_data["Db_column_to_partition_read"]
+                )
+            elif (
+                self.filtered_data["DbLoadType"] == "merge"
+                or self.filtered_data["DbLoadType"] == "append"
+            ):
+                cnt = wmprcsr.fn_getcount_delta(high_wm, lowwatermarkvalue)
+                rowcount = cnt.rdd.collect()[0][0]
+                load_sql = wmprcsr.fn_form_qry_loadfromdb_delta(
+                    high_wm,
+                    lowwatermarkvalue,
+                    list_of_columns,
+                    self.filtered_data["Db_column_to_partition_read"],
+                )
+            delta_data = self.src_dbcn.fn_read_parallel(
+                load_sql,
+                self.filtered_data["number_of_partitions_read_from_source"],
+                self.filtered_data["Db_column_to_partition_read"],
+                0,
+                rowcount,
+            )
+            print("number if partitions is", delta_data.rdd.getNumPartitions())
+            now = datetime.now()
+            LandingFolder = (
+                self.Folderpath["path"] + "/" + self.filtered_data["Filename_Template"]
+            )
+            # LandingFolder=Folderpath['path']
+            final_path = f'{LandingFolder}_{now.strftime("%Y_%m_%d_%H_%M_%S")}'
+            print(final_path)
+            delta_data.write.parquet(final_path)
+        except Exception as e:
+            print(e)
+            error = True
+            error_msg = e
+        else:
+            if (
+                self.filtered_data["DbLoadType"] == "merge"
+                or self.filtered_data["DbLoadType"] == "append"
+            ):
+                result = self.dbcon_obj.fn_update_watermark(self.FNT_ID, high_wm)
+            error = False
+            error_msg = ""
+            print(result)
+            print(error, error_msg)
+        finally:
+            print("calling logger", self.FNT_ID, self.jobId)
+            self.dbcon_obj.fn_update_connector_logs(
+                rowcount, self.jobId, high_wm, final_path
+            )
+
+
+       ----------------------------------------------
+       06.F_mv_db_to_land_updated.py
+
+       from F_metadata_configs_updated import waterMarkPreocessor
+from pyspark.sql.functions import greatest, col, to_timestamp
+from datetime import datetime
+
+
+class mv_db_to_lan:
+    def __init__(
+        self,
+        FNT_ID,
+        jobId,
+        filtered_data,
+        dbcon_obj,
+        src_dbcn,
+        list_wm_columns,
+        columndetails,
+        Folderpath,
+        typeof_db,
+    ):
+        self.FNT_ID = FNT_ID
+        self.jobId = jobId
+        self.filtered_data = filtered_data
+        self.dbcon_obj = dbcon_obj
+        self.src_dbcn = src_dbcn
+        self.list_wm_columns = list_wm_columns
+        self.columndetails = columndetails
+        self.Folderpath = Folderpath
+        self.typeof_db = typeof_db
+        print("typeof_db_mv_db_to_land_updated", self.typeof_db)
+
+    def mv_db_to_landing(self):
+        try:
+            print("typeof_db_mv_db_to_landing_Func", self.typeof_db)
+            self.dbcon_obj.fn_insert_connector_logs(self.FNT_ID, self.jobId)
+            lowwatermarkvalue = self.filtered_data["LastWaterMarkValue"]
+            print("typeof_db_before_wmprcsr", self.typeof_db)
+            typeof_db = self.typeof_db
+            print(typeof_db)
+            wmprcsr = waterMarkPreocessor(
+                repDbConObj=self.dbcon_obj,
+                schemaName=self.filtered_data["DBschemaname"],
+                tableName=self.filtered_data["SourceTableName"],
+                waterMarkColumns=self.list_wm_columns,
+                lowWaterMark=lowwatermarkvalue,
+                eolDbConObj=self.src_dbcn,
+                typeof_db=self.typeof_db,
+            )
+            print("typeof_db_after_wmprcsr", self.typeof_db)
+            rowcount = 0
+
+            if self.filtered_data["DbLoadType"] == "full":
+                print("DB_lod_Type_", self.filtered_data["DbLoadType"])
+                sql = wmprcsr.fn_formQuery()
+                print(sql)
+                pass
+            elif (
+                self.filtered_data["DbLoadType"] == "merge"
+                or self.filtered_data["DbLoadType"] == "append"
+            ):
+                sql = wmprcsr.fn_formQuery()
+                print(sql)
+            print("print line 42 in mv_db_to_land.py")
+            data = wmprcsr.fn_get_high_watermark(sql)
+            print("passed")
+            print("data is", data.show())
+            if self.typeof_db == "azuresql":
+                if len(data.columns) <= 1:
+                    maxdate = data.select(
+                        to_timestamp((col(data.columns[0])), "yyyy-MM-dd HH:mm:ss.SSS")
+                        .cast("string")
+                        .alias("greatest")
+                    )
+                else:
+                    maxdate = data.select(
+                        to_timestamp(
+                            greatest(*[col(a) for a in data.columns]),
+                            "yyyy-MM-dd HH:mm:ss.SSS",
+                        )
+                        .cast("string")
+                        .alias("greatest")
+                    )
+            elif self.typeof_db == "mysql" or self.typeof_db == "postgres" or self.typeof_db == 'bigquery' or self.typeof_db =="snowflake":
+                if len(data.columns) <= 1:
+                    maxdate = data.select(
+                        to_timestamp((col(data.columns[0])), "yyyy-MM-dd HH:mm:ss")
+                        .cast("string")
+                        .alias("greatest")
+                    )
+                else:
+                    maxdate = data.select(
+                        to_timestamp(
+                            greatest(*[col(a) for a in data.columns]),
+                            "yyyy-MM-dd HH:mm:ss",
+                        )
+                        .cast("string")
+                        .alias("greatest")
+                    )
+            print("passed full load here")
+            print("maxdate", maxdate.show())
+            high_wm = maxdate.rdd.collect()[0][0]
+            print("high wm ", high_wm)
+            print("lowwatermarkvalue wm ", lowwatermarkvalue)
+            column_list = self.columndetails.select("Expected_columnname")
+            list_of_columns = [row.Expected_columnname for row in column_list.collect()]
+            print(list_of_columns)
+            if self.filtered_data["DbLoadType"] == "full":
+                print(
+                    "self.filtered_data['DbLoadType']", self.filtered_data["DbLoadType"]
+                )
+                cnt = wmprcsr.fn_getcount_full()
+                rowcount = cnt.rdd.collect()[0][0]
+                load_sql = wmprcsr.fn_form_qry_loadfromdb_full(
+                    list_of_columns, self.filtered_data["Db_column_to_partition_read"]
+                )
+            elif (
+                self.filtered_data["DbLoadType"] == "merge"
+                or self.filtered_data["DbLoadType"] == "append"
+            ):
+                cnt = wmprcsr.fn_getcount_delta(high_wm, lowwatermarkvalue)
+                rowcount = cnt.rdd.collect()[0][0]
+                load_sql = wmprcsr.fn_form_qry_loadfromdb_delta(
+                    high_wm,
+                    lowwatermarkvalue,
+                    list_of_columns,
+                    #self.filtered_data["Db_column_to_partition_read"],
+                )
+            delta_data = self.src_dbcn.fn_read_parallel(
+                load_sql,
+                self.filtered_data["number_of_partitions_read_from_source"],
+                self.filtered_data["Db_column_to_partition_read"],
+                0,
+                rowcount,
+            )
+            print("number if partitions is", delta_data.rdd.getNumPartitions())
+            now = datetime.now()
+            LandingFolder = (
+                self.Folderpath["path"] + self.filtered_data["Filename_Template"]
+                # self.Folderpath["path"] + "/" + self.filtered_data["Filename_Template"]
+
+            )
+            final_path = f'{LandingFolder}_{now.strftime("%Y_%m_%d_%H_%M_%S")}'
+            print(final_path)
+            delta_data.write.parquet(final_path)
+        except Exception as e:
+            print(e)
+            error = True
+            error_msg = e
+        else:
+            if (
+                self.filtered_data["DbLoadType"] == "merge"
+                or self.filtered_data["DbLoadType"] == "append"
+            ):
+                result = self.dbcon_obj.fn_update_watermark(self.FNT_ID, high_wm)
+            error = False
+            error_msg = ""
+            print(result)
+            print(error, error_msg)
+        finally:
+            print("calling logger", self.FNT_ID, self.jobId)
+            self.dbcon_obj.fn_update_connector_logs(
+                rowcount, self.jobId, high_wm, final_path
+            )
+
+
+       -----------------------------
+07.  readme.md
+
+Db to landing folder for bigquery and snowflake changes
+
