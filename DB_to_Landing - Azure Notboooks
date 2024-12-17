@@ -1,0 +1,1058 @@
+DB_to_Landing : Azue Notebooks:
+azure Notbook:
+
+01.F_metadata_functions
+
+class waterMarkPreocessor:
+    def __init__(
+        self,
+        repDbConObj,
+        schemaName,
+        tableName,
+        waterMarkColumns,
+        lowWaterMark,
+        eolDbConObj,
+    ):
+        self.rep_db_con_obj = repDbConObj
+        self.schema_name = schemaName
+        self.table_name = tableName
+        self.list_of_wm_columns = waterMarkColumns
+        self.low_water_mark = lowWaterMark
+        self.eol_db_con = eolDbConObj
+
+        pass
+
+    def fn_formQuery(self):
+        expr = ",".join(
+            [
+                f"CONVERT(VARCHAR(30),cast(max({a}) as datetime), 121) as '{a}'"
+                for a in self.list_of_wm_columns
+            ]
+        )
+        print(f"max({expr})n")
+        sql = f"(select {expr} from {self.schema_name}.{self.table_name}) as qry  "
+        print("final sql is", sql)
+        return sql
+
+    def fn_get_low_watermark(self):
+        '''
+        This method is intentionally left empty.
+        '''
+        pass
+
+    def fn_get_high_watermark(self, sql):
+        data = self.eol_db_con.fn_read(sql)
+        return data
+
+    def fn_getcount_full(self):
+        print("inside")
+        sql = f"(select count(1) as cnt from {self.schema_name}.{self.table_name}) as qry  "
+        data = self.eol_db_con.fn_read(sql)
+        print(sql)
+        return data
+
+    def fn_getcount_delta(self, high_wm, low_wm):
+        print("inside")
+        expr = " or ".join(
+            [f"({a}>'{low_wm}' and {a}<='{high_wm}')" for a in self.list_of_wm_columns]
+        )
+        print(f"max({expr})n")
+        sql = f"(select count(1) as cnt from {self.schema_name}.{self.table_name} where {expr}) as qry  "
+        data = self.eol_db_con.fn_read(sql)
+        print(sql)
+        return data
+
+    def fn_form_qry_loadfromdb_full(self, lst_columns):
+        column_list = ",".join(lst_columns)
+        sql = f"(select  {column_list} from {self.schema_name}.{self.table_name} ) as qry  "
+        print("sql for fetrching", sql)
+        return sql
+
+    def fn_form_qry_loadfromdb_delta(self, high_wm, low_wm, lst_columns):
+        expr = " or ".join(
+            [f"({a}>'{low_wm}' and {a}<='{high_wm}')" for a in self.list_of_wm_columns]
+        )
+        print(f"max({expr})n")
+        column_list = ",".join(lst_columns)
+        sql = f"(select    {column_list} from {self.schema_name}.{self.table_name} where {expr}) as qry  "
+        print("sql for fetrching", sql)
+        return sql
+
+    def fn_getColumnMapping(self, processname):
+        print("table name is", self.table_name)
+        sql = f"(select tab.TableName,col.columnname from T_table_configs tab inner join T_table_columns col on tab.TableId=col.TableId  inner join T_process_table_mapping  \
+    tptm on tptm.tableId=tab.TableId inner join T_process_list pc on tptm.processId=pc.processId  \
+    where tab.TableName='{self.table_name}' and pc.ProcessName='{processname}') as qry"
+        data = self.rep_db_con_obj.fn_read(sql)
+        return data
+
+        ---------------------------------------------------
+
+    02. faker-RDBMS-AZ-SQL
+
+
+    spark.read.parquet('/mnt/landing/AWS_Postgres/IN/T_AWS_postgres_employee_2024_03_12_06_48_18').display()
+------------------
+    from faker import Faker
+	fake = Faker()
+--------------------------
+	from faker import Faker
+from random import randint
+import pandas as pd
+import random
+from datetime import datetime
+import os
+import shutil
+import csv
+
+fake = Faker()
+
+
+def create_rows_faker(num=1):
+    output = [
+        {
+            "emp_id": int(x),
+            "empname": fake.first_name(),
+            "age": random.randint(21, 50),
+            "salary": random.randint(10000, 60000),
+            "dob": fake.date_of_birth(),
+            "modified_date": datetime.now(),
+        }
+        for x in range(num)
+    ]
+    return output
+-----------------------
+
+def datagen_error_empname(df):
+    # dfupdate=df.sample(20)
+    dfupdate = df.sample(10)
+
+    dfupdate["empname"] = dfupdate["empname"].apply(lambda x: x + x)
+    return dfupdate
+---------------
+import numpy as np
+
+
+def datagen_error_dob(df):
+    dfupdate = df.sample(128)
+    dfupdate["dob"] = "NAN"
+    return dfupdate
+------------------------
+
+
+df_faker = pd.DataFrame(create_rows_faker(1000))
+y = datagen_error_empname(df_faker)
+df_faker.update(y)
+m = datagen_error_dob(df_faker)
+df_faker.update(m)
+df_faker["dob"].replace({"NAN": np.nan}, inplace=True)
+# x=str(randint(100000,999999))
+# print(x)
+# TEMPORARY_TARGET='/mnt/landing/TestData/IN/T_employee_data_'+x+'.csv'
+# df_faker.to_csv('/dbfs'+TEMPORARY_TARGET, index=False,header=True)
+
+---------------
+sqlserver = dbutils.secrets.get(
+    scope="fof-prd-scope", key="RDMS-EDA-SQLDB-ServerName"
+)
+sqldatabase = dbutils.secrets.get(
+    scope="fof-prd-scope", key="RDMS-EDA-SQLDB-DBName"
+)
+url = f"jdbc:sqlserver://{sqlserver};databaseName={sqldatabase}"
+--------------------
+display(df_faker)
+
+-----------
+df1 = spark.createDataFrame(df_faker)
+------------
+df = (
+    spark.read.format("jdbc")
+    .option("url", url)
+    .option("dbtable", "employee")
+    .option("user", "fofsqladmin")
+    .option("password", "FoF@Admin")
+    .load()
+)
+--------------
+df1.write.format("jdbc").option("url", url).option("dbtable", "employee").option(
+    "user", "fofsqladmin"
+).option("password", "FoF@Admin").mode("append").save()
+
+------------------------------
+
+
+03. NB_azuredb
+
+import msal
+class azdbconnection:
+  def __init__(self,jdbcurl,jdbcUsername,jdbcPassword,jdbcdriver,session):
+    self.jdbcurl = jdbcurl
+    self.username=jdbcUsername
+    self.password=jdbcPassword
+    self.driver=jdbcdriver
+    self.session=session
+    self.con,self.token=self.fn_get_connection()
+    
+  
+    
+  def fn_get_connection(self,scope='eda-dev-adb-scope'):
+    # Set url & credentials
+    tenant_id = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SPN-ClientId")
+    sp_client_id = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SPN-ClientId")
+    sp_client_secret = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SPN-ClientSecret")
+    
+
+    url=self.jdbcurl
+
+    # Write your SQL statement as a string
+
+
+    # Generate an OAuth2 access token for service principal
+    authority = f"https://login.windows.net/{tenant_id}"
+    app = msal.ConfidentialClientApplication(sp_client_id, sp_client_secret, authority)
+    token = app.acquire_token_for_client(scopes=["https://database.windows.net/.default"])["access_token"]
+
+    # Create a spark properties object and pass the access token
+    properties = spark._sc._gateway.jvm.java.util.Properties()
+    properties.setProperty("accessToken", token)
+
+    # Fetch the driver manager from your spark context
+    driver_manager = spark._sc._gateway.jvm.java.sql.DriverManager
+
+    # Create a connection object and pass the properties object
+    con = driver_manager.getConnection(url, properties)
+    return con,token
+     
+  def fn_read_parallel(self,sql,numberOfPartitions,partitionColumn,lowerBound,upperBound):
+    print('no of partition,lower bound,uppre bound,partition column is',numberOfPartitions,partitionColumn,lowerBound,upperBound)
+    jdbcDF = self.session.read.format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("user", self.username) \
+    .option("password", self.password) \
+    .option("driver", self.driver) \
+    .option("numPartitions",numberOfPartitions ) \
+    .option("partitionColumn",f"{partitionColumn}" ) \
+    .option("lowerBound", lowerBound)\
+    .option("upperBound", upperBound)\
+    .load()
+    print('partitions in df',jdbcDF.rdd.getNumPartitions())
+
+    return jdbcDF
+
+  def fn_read(self,sql):
+    jdbcDF = self.session.read.format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("user", self.username) \
+    .option("password", self.password) \
+    .option("driver", self.driver) \
+    .load()
+    return jdbcDF
+  
+  def fn_read_withSp(self,sql):
+      
+    jdbcDF = self.session.read.format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("accessToken", self.token) \
+    .option("hostNameInCertificate", "*.database.windows.net") \
+    .option("driver", self.driver) \
+    .load()
+    return jdbcDF
+  def fn_write_parallel(self,sql,numberOfPartitions,partitionColumn,lowerBound,upperBound,df):
+    print('no of partition,lower bound,uppre bound,partition column is',numberOfPartitions,partitionColumn,lowerBound,upperBound)
+    print('jdbc url is ',self.jdbcurl)
+    print('tablename is',sql)
+    df.repartition(numberOfPartitions).write.mode('overwrite')\
+    .format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("user", self.username) \
+    .option("password", self.password) \
+    .option("driver", self.driver).save()
+    
+  
+  def fn_get_paths(self,sourcesystem_name,usecase_name,fnt_id,dllayer,pathtype):
+    try:
+        statement = f"""EXEC dbo.sp_get_paths  @sourcesystem='{sourcesystem_name}',@usecase='{usecase_name}',@fnt={fnt_id},@dllayer='{dllayer}',@pathtype='{pathtype}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()
+        resultSet=exec_statement.getResultSet()   
+        while (resultSet.next()):
+            vals={}        
+            vals['path']=resultSet.getString('path')               
+
+        return vals
+        exec_statement.close()   
+    except Exception as e:
+        print(e)
+  def fn_update_watermark(self,fnt_id,watermarkvalue):
+    try:
+        statement = f"""EXEC dbo.sp_update_watermark  @fntid={fnt_id},@watermarkvalue='{watermarkvalue}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+  def fn_update_rowcount(self,fnt_id,job_id,rowcount):
+    try:
+        statement = f"""EXEC dbo.sp_update_db_delta_count  @fnt_id={fnt_id},@job_id='{job_id}',@row_count={rowcount}"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+  def fn_insert_connector_logs(self,FNT_ID,jobId):
+    try:
+        statement = f"""EXEC dbo.sp_insert_connector_logs @fk_fnt_id={FNT_ID},@job_run_id='{jobId}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+  def fn_update_connector_logs(self,row_count,job_run_id,lastwatermark_value):
+    try:
+        statement = f"""EXEC dbo.sp_update_connector_logs @row_count={row_count},@job_run_id='{job_run_id}',@lastwatermark_value='{lastwatermark_value}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+
+
+-----------------------------------------------------
+
+04. NB_azuredb_v1.0
+
+import msal
+class azdbconnection:
+  def __init__(self,jdbcurl,jdbcUsername,jdbcPassword,jdbcdriver,session):
+    self.jdbcurl = jdbcurl
+    self.username=jdbcUsername
+    self.password=jdbcPassword
+    self.driver=jdbcdriver
+    self.session=session
+    
+    
+  
+    
+  def fn_get_connection(self,scope='eda-dev-adb-scope'):
+    # Set url & credentials
+    tenant_id = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SPN-TenantId")
+    sp_client_id = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SPN-ClientId")
+    sp_client_secret = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SPN-ClientSecret")
+    
+    url=self.jdbcurl
+
+    # Write your SQL statement as a string
+
+
+    # Generate an OAuth2 access token for service principal
+    authority = f"https://login.windows.net/{tenant_id}"
+    app = msal.ConfidentialClientApplication(sp_client_id, sp_client_secret, authority)
+    token = app.acquire_token_for_client(scopes=["https://database.windows.net/.default"])["access_token"]
+
+    # Create a spark properties object and pass the access token
+    properties = spark._sc._gateway.jvm.java.util.Properties()
+    properties.setProperty("accessToken", token)
+
+    # Fetch the driver manager from your spark context
+    driver_manager = spark._sc._gateway.jvm.java.sql.DriverManager
+
+    # Create a connection object and pass the properties object
+    con = driver_manager.getConnection(url, properties)
+    return con,token
+
+  def source_con_string_token(self):
+      self.con1,self.token=self.fn_get_connection()
+  def desdb_con_string(self):
+      self.con,self.token=self.fn_get_connection()
+     
+  def fn_read_parallel(self,sql,numberOfPartitions,partitionColumn,lowerBound,upperBound):
+    print('no of partition,lower bound,uppre bound,partition column is',numberOfPartitions,partitionColumn,lowerBound,upperBound)
+    jdbcDF = self.session.read.format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("user", self.username) \
+    .option("password", self.password) \
+    .option("driver", self.driver) \
+    .option("numPartitions",numberOfPartitions ) \
+    .option("partitionColumn",f"{partitionColumn}" ) \
+    .option("lowerBound", lowerBound)\
+    .option("upperBound", upperBound)\
+    .load()
+    print('partitions in df',jdbcDF.rdd.getNumPartitions())
+    #.cache()
+    return jdbcDF
+
+  def fn_read(self,sql):
+    jdbcDF = self.session.read.format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("query", sql) \
+    .option("user", self.username) \
+    .option("password", self.password) \
+    .option("driver", self.driver) \
+    .load()
+    return jdbcDF
+  
+  def fn_read_withSp(self,sql):
+      
+    jdbcDF = self.session.read.format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("accessToken", self.token) \
+    .option("hostNameInCertificate", "*.database.windows.net") \
+    .option("driver", self.driver) \
+    .load()
+    display(jdbcDF)
+    return jdbcDF
+  def fn_write_parallel(self,sql,numberOfPartitions,partitionColumn,lowerBound,upperBound,df):
+    print('no of partition,lower bound,uppre bound,partition column is',numberOfPartitions,partitionColumn,lowerBound,upperBound)
+    print('jdbc url is ',self.jdbcurl)
+    print('tablename is',sql)
+    df.repartition(numberOfPartitions).write.mode('overwrite')\
+    .format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("user", self.username) \
+    .option("password", self.password) \
+    .option("driver", self.driver).save()
+    
+  
+  def fn_get_paths(self,sourcesystem_name,usecase_name,fnt_id,dllayer,pathtype):
+    try:
+        statement = f"""EXEC dbo.sp_get_paths  @sourcesystem='{sourcesystem_name}',@usecase='{usecase_name}',@fnt={fnt_id},@dllayer='{dllayer}',@pathtype='{pathtype}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()
+        resultSet=exec_statement.getResultSet()   
+        while (resultSet.next()):
+            vals={}        
+            vals['path']=resultSet.getString('path')               
+
+        return vals
+        exec_statement.close()   
+    except Exception as e:
+        print(e)
+  def fn_update_watermark(self,fnt_id,watermarkvalue):
+    try:
+        statement = f"""EXEC dbo.sp_update_watermark  @fntid={fnt_id},@watermarkvalue='{watermarkvalue}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+  def fn_update_rowcount(self,fnt_id,job_id,rowcount):
+    try:
+        statement = f"""EXEC dbo.sp_update_db_delta_count  @fnt_id={fnt_id},@job_id='{job_id}',@row_count={rowcount}"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+  def fn_insert_connector_logs(self,FNT_ID,jobId):
+    try:
+        statement = f"""EXEC dbo.sp_insert_connector_logs @fk_fnt_id={FNT_ID},@job_run_id='{jobId}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+  def fn_update_connector_logs(self,row_count,job_run_id,lastwatermark_value):
+    try:
+        statement = f"""EXEC dbo.sp_update_connector_logs @row_count={row_count},@job_run_id='{job_run_id}',@lastwatermark_value='{lastwatermark_value}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+
+
+----------------------------------------------------------------
+05. NB_Db_to_Landing
+
+df = spark.read.format("bigquery")\
+    .option("credentialsFile","/dbfs/FileStore/rbprj_100009_eec5e4919e91.json")\
+    .option("parentProject","rbprj-100009")\
+    .option("table","test_connection.employee")\
+    .option("bigquery.provider", "com.google.cloud.spark.bigquery.v2.Spark34BigQueryTableProvider")\
+    .load()
+df.display()
+---------
+from F_dbcon import azdbconnection
+from F_metadata_configs_updated import waterMarkPreocessor 
+from F_mv_db_to_land_updated import mv_db_to_lan
+from F_configs import metadatconfigs
+from commonfunc.F_databaseconnect import DBconnection
+
+from pyspark.sql.functions import greatest,col,to_timestamp,to_str
+from pyspark.sql.functions import spark_partition_id, asc, desc
+import traceback
+from datetime import datetime
+from pyspark import SparkContext, SparkConf, SQLContext
+from pyspark.sql import SparkSession
+----------
+'''
+jobId=dbutils.widgets.get("jobRunId")
+FNT_ID = dbutils.widgets.get("FNT_ID")
+KeyVaultSecret_prefix=dbutils.widgets.get("src_KeyVaultSecret_prefix")
+des_KeyVaultSecret_prefix=dbutils.widgets.get("des_KeyVaultSecret_prefix")
+'''
+-------
+
+# FNT_ID = dbutils.widgets.get("FNT_ID")
+# jobId=dbutils.widgets.get("job_run_id")
+# KeyVaultSecret_prefix=dbutils.widgets.get("KeyVaultSecret_prefix")
+# SourceSystem=dbutils.widgets.get("SourceSystem")
+
+-------------
+import uuid
+
+
+# import uuid
+# FNT_ID = 121
+# jobId=str(uuid.uuid4())
+# print('Job_id',jobId)
+# KeyVaultSecret_prefix='RDMS'
+# SourceSystem='AdventureWorksSales'
+
+# import uuid
+# FNT_ID = 238
+# jobId=str(uuid.uuid4())
+# print('Job_id',jobId)
+# KeyVaultSecret_prefix='aws'
+# SourceSystem='AWS_MYSQL'
+
+
+
+# FNT_ID = 244
+# jobId=str(uuid.uuid4())
+# print('Job_id',jobId)
+# KeyVaultSecret_prefix='snowflake'
+# SourceSystem='Snowflake'
+
+
+FNT_ID = 243
+jobId=str(uuid.uuid4())
+print('Job_id',jobId)
+KeyVaultSecret_prefix='bigquery'
+SourceSystem='GCP_Bigquery'
+----------
+server = dbutils.secrets.get(scope="fof-prd-scope",key="EDA-SQLDB-ServerName")
+database = dbutils.secrets.get(scope="fof-prd-scope",key="EDA-SQLDB-DBName")
+spark1 = SparkSession.builder.appName('integrity-tests').config("spark.sql.legacy.timeParserPolicy","EXCEPTION").getOrCreate()
+
+dbasecon=DBconnection(database=database,server=server,spark1=spark1)
+con=dbasecon.fn_get_connection()
+metadata_configs=metadatconfigs(FNT_ID,con)
+config_dict=metadata_configs.get_allconfigs()
+dbconfigs=config_dict['db_extractconfigs']
+typeof_db=dbconfigs['typeof_db']
+print("DB_type",typeof_db)
+-------
+# Define the driver string constant
+SQL_SERVER_DRIVER = 'com.microsoft.sqlserver.jdbc.SQLServerDriver'
+filtered_data = None
+list_wm_columns = None
+columndetails = None
+Folderpath = None
+rowcount = None
+final_path =None
+try:
+    # Retrieving database connection and other configurations
+    conf_databasename = dbutils.secrets.get(scope='fof-prd-scope', key='EDA-SQLDB-DBName')
+    conf_servername = dbutils.secrets.get(scope='fof-prd-scope', key='EDA-SQLDB-ServerName')
+    conf_jdbcDriver = SQL_SERVER_DRIVER
+    jdbcDriver = SQL_SERVER_DRIVER
+    url = f'jdbc:sqlserver://{conf_servername}:1433;database={conf_databasename};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;'
+    spark1 = SparkSession.builder.appName('integrity-tests').config("spark.sql.legacy.timeParserPolicy", "EXCEPTION").getOrCreate()
+
+    if typeof_db == 'azuresql' or  typeof_db == 'mysql' or typeof_db == 'postgres':
+        src_databasename=dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}DB')
+        src_servername=dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}Sever')
+        src_databaseusername=dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}username')
+        src_databasepassword=dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}Password')
+    elif typeof_db == 'bigquery':
+        src_materializationDataset = dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}MaterializationDataset') 
+        src_parentProject = dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}ParentProject') 
+
+    # src_databasename = dbutils.secrets.get(scope='fof-prd-scope', key=f'{KeyVaultSecret_prefix}-EDA-SQLDB-DBName')
+    # src_servername = dbutils.secrets.get(scope='fof-prd-scope', key=f'{KeyVaultSecret_prefix}-EDA-SQLDB-ServerName')
+    # src_databaseusername = dbutils.secrets.get(scope='fof-prd-scope', key=f'{KeyVaultSecret_prefix}-EDA-SQLDB-SQLusername')
+    # src_databasepassword = dbutils.secrets.get(scope='fof-prd-scope', key=f'{KeyVaultSecret_prefix}-EDA-SQLDB-DBPassword')
+
+ 
+
+    # Determining the JDBC driver and URL based on the type of database
+    if typeof_db == 'azuresql':
+        src_jdbcDriver = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+        src_url = f'jdbc:sqlserver://{src_servername}:1433;database={src_databasename};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;'
+        print("src_url", src_url)
+    elif typeof_db == 'mysql':
+        src_jdbcDriver = "com.mysql.cj.jdbc.Driver"
+        src_url = f'jdbc:mysql://{src_servername}:3306/{src_databasename}'
+        print("typeof_main_notebook", typeof_db)
+        print("src_url", src_url)
+    elif typeof_db == "postgres":
+        src_jdbcDriver = "org.postgresql.Driver"
+        src_url = f'jdbc:postgresql://{src_servername}:5432/{src_databasename}'
+        print("src_url", src_url)
+    elif typeof_db == 'bigquery':
+        print('Bigquery line number 48')
+        src_credentialsFile  = "/dbfs/FileStore/rbprj_100009_147b17db74b3.json"
+    elif typeof_db == 'snowflake':
+        src_databasename=dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}DB')
+        src_servername=dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}Server')
+        src_databaseusername=dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}username')
+        src_databasepassword=dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}Password')
+        src_warehouse=dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}warehouse')
+        src_schema = dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}schema')
+        src_role = dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}role')
+        src_authenticator = dbutils.secrets.get(scope='fof-prd-scope',key=f'{KeyVaultSecret_prefix}authenticator')
+
+    # Creating database connections
+    if typeof_db == 'azuresql' or  typeof_db == 'mysql' or typeof_db == 'postgres':
+        src_dbcn=azdbconnection(jdbcurl=src_url,jdbcUsername=src_databaseusername,jdbcPassword=src_databasepassword,jdbcdriver=src_jdbcDriver,credentialsFile=None,materializationDataset=None,parentProject=None,host=None,warehouse=None,database=None,schema=None,session=spark1,typeof_db=typeof_db)
+    elif typeof_db == "bigquery":
+        src_dbcn=azdbconnection(jdbcurl=None,jdbcUsername=None,jdbcPassword=None,jdbcdriver=None,credentialsFile=src_credentialsFile,materializationDataset=src_materializationDataset,parentProject=src_parentProject,host=None,warehouse=None,database=None,schema=None,session=spark1,typeof_db=typeof_db)
+    elif typeof_db == "snowflake":
+        src_dbcn=azdbconnection(jdbcurl=None,jdbcUsername=src_databaseusername,jdbcPassword=src_databasepassword,jdbcdriver=None,credentialsFile=None,materializationDataset=None,parentProject=None,host=src_servername,warehouse=src_warehouse,database=src_databasename,schema=src_schema,session=spark1,typeof_db=typeof_db)
+
+    dbcon_obj=azdbconnection(jdbcurl=url,jdbcUsername=None,jdbcPassword=None,jdbcdriver=conf_jdbcDriver,credentialsFile=None,materializationDataset=None,parentProject=None,host=None,warehouse=None,database=None,schema=None,session=spark1,typeof_db=typeof_db)
+    dbcon_obj.desdb_con_string()
+    
+    # Reading table configurations
+    read_table_configs = f'(select tab.Filename_Template,tab.Total_columns,tab.DbLoadType,tab.LandingDbDeltaFolder,con.DBschemaname, CONVERT(VARCHAR(30),cast(con.LastWaterMarkValue as datetime), 121)  as LastWaterMarkValue,con.SourceTableName,sou.Sourcesystem_name,con.Db_column_to_partition_read,con.number_of_partitions_read_from_source from T_Meta_File_Standard_Schema tab inner join T_META_DB_Extract_configs con on con.FK_FNT_ID=tab.FNT_Id inner join T_META_Source_Systems sou on sou.PK_Sourcesystem_id=tab.FK_sourcesytem_id where tab.fnt_id={FNT_ID}) as a'
+    configdata = dbcon_obj.fn_read_withSp(read_table_configs)
+    filtered_data = configdata.toPandas().T.to_dict()[0]
+
+    # Reading column level information
+    columnLevelInfo = f"""(select Expected_columnname,isWaterMarkColumn,KeyColumnOrder from  T_MST_DQF_Column_Expected where fk_fnt_id={FNT_ID} and Validity_Enddate='9999-12-31 00:00:00.000') as b"""
+    columndetails = dbcon_obj.fn_read_withSp(columnLevelInfo)
+    watermarkcolumns = columndetails.filter("isWaterMarkColumn==1")
+    if watermarkcolumns.count() >= 1:
+        list_wm_columns = watermarkcolumns.select('Expected_columnname').rdd.flatMap(lambda x: x).collect()
+        print('water mark column present')
+    else:
+        print('no watermark column configured')
+    
+    # Retrieving folder path
+    Folderpath = dbcon_obj.fn_get_paths(SourceSystem, '', FNT_ID, 'landing', 'landing')
+    print('Folderpath', Folderpath)
+
+    # Executing database to landing process
+    mdl = mv_db_to_lan(FNT_ID, jobId, filtered_data, dbcon_obj, src_dbcn, list_wm_columns, columndetails, Folderpath, typeof_db)
+    mdl.mv_db_to_landing()
+    
+
+except Exception as e:
+    print(e)
+    error = True
+    error_msg = e
+finally:
+    if final_path is not None:
+        print('Final_path_in_main_notebook',final_path)
+        print('calling logger', FNT_ID, jobId)
+        dbcon_obj.fn_update_connector_logs(rowcount, jobId, high_wm, final_path)
+    # else:
+    #     print("final_path was not assigned")
+---------
+
+'''
+snowflake_table = (spark.read
+  .format("snowflake")
+  .option("host", "aj83033.central-india.azure.snowflakecomputing.com")
+#   .option("port", "port") # Optional - will use default port 443 if not specified.
+  .option("user", "MOON")
+  .option("password", "Vijayawada@2022")
+  .option("sfWarehouse", "COMPUTE_WH")
+  .option("database", "EDADB")
+  .option("schema", "dbo") # Optional - will use default schema "public" if not specified.
+  .option("query", "select to_varchar(max(modified_date),'yyyy-mm-dd hh:mi:ss') as modified_date from edadb.dbo.employee")
+  .load()
+)
+display(snowflake_table)
+'''
+--------------------------------------------------------------------------------------
+05. NB_sourcedatabse
+
+import msal
+class dbconnection:
+  def __init__(self,jdbcurl,jdbcUsername,jdbcPassword,jdbcdriver,session):
+    self.jdbcurl = jdbcurl
+    self.username=jdbcUsername
+    self.password=jdbcPassword
+    self.driver=jdbcdriver
+    self.session=session
+    
+  
+    
+  def fn_get_connection(self):
+    # Set url & credentials
+    tenant_id = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SPN-TenantId")
+    sp_client_id = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SPN-ClientId")
+    sp_client_secret = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SPN-ClientSecret")
+    
+    url=self.jdbcurl
+
+    # Write your SQL statement as a string
+
+
+    # Generate an OAuth2 access token for service principal
+    authority = f"https://login.windows.net/{tenant_id}"
+    app = msal.ConfidentialClientApplication(sp_client_id, sp_client_secret, authority)
+    token = app.acquire_token_for_client(scopes=["https://database.windows.net/.default"])["access_token"]
+
+    # Create a spark properties object and pass the access token
+    properties = spark._sc._gateway.jvm.java.util.Properties()
+    properties.setProperty("accessToken", token)
+
+    # Fetch the driver manager from your spark context
+    driver_manager = spark._sc._gateway.jvm.java.sql.DriverManager
+
+    # Create a connection object and pass the properties object
+    con = driver_manager.getConnection(url, properties)
+    return con,token
+      
+  def fn_read_parallel(self,sql,numberOfPartitions,partitionColumn,lowerBound,upperBound):
+    print('no of partition,lower bound,uppre bound,partition column is',numberOfPartitions,partitionColumn,lowerBound,upperBound)
+    jdbcDF = self.session.read.format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("user", self.username) \
+    .option("password", self.password) \
+    .option("driver", self.driver) \
+    .option("numPartitions",numberOfPartitions ) \
+    .option("partitionColumn",f"{partitionColumn}" ) \
+    .option("lowerBound", lowerBound)\
+    .option("upperBound", upperBound)\
+    .load()
+    print('partitions in df',jdbcDF.rdd.getNumPartitions())
+    #.cache()
+    return jdbcDF
+
+  def fn_read(self,sql):
+    jdbcDF = self.session.read.format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("user", self.username) \
+    .option("password", self.password) \
+    .option("driver", self.driver) \
+    .load()
+    return jdbcDF
+  
+  def fn_read_withSp(self,sql):
+      
+    jdbcDF = self.session.read.format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("accessToken", self.token) \
+    .option("hostNameInCertificate", "*.database.windows.net") \
+    .option("driver", self.driver) \
+    .load()
+    return jdbcDF
+  def fn_write_parallel(self,sql,numberOfPartitions,partitionColumn,lowerBound,upperBound,df):
+    print('no of partition,lower bound,uppre bound,partition column is',numberOfPartitions,partitionColumn,lowerBound,upperBound)
+    print('jdbc url is ',self.jdbcurl)
+    print('tablename is',sql)
+    df.repartition(numberOfPartitions).write.mode('overwrite')\
+    .format("jdbc") \
+    .option("url",self.jdbcurl) \
+    .option("dbtable", sql) \
+    .option("user", self.username) \
+    .option("password", self.password) \
+    .option("driver", self.driver).save()
+    
+  
+  def fn_get_paths(self,sourcesystem_name,usecase_name,fnt_id,dllayer,pathtype):
+    try:
+        statement = f"""EXEC dbo.sp_get_paths  @sourcesystem='{sourcesystem_name}',@usecase='{usecase_name}',@fnt={fnt_id},@dllayer='{dllayer}',@pathtype='{pathtype}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()
+        resultSet=exec_statement.getResultSet()   
+        while (resultSet.next()):
+            vals={}        
+            vals['path']=resultSet.getString('path')               
+
+        return vals
+        exec_statement.close()   
+    except Exception as e:
+        print(e)
+  def fn_update_watermark(self,fnt_id,watermarkvalue):
+    try:
+        statement = f"""EXEC dbo.sp_update_watermark  @fntid={fnt_id},@watermarkvalue='{watermarkvalue}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+  def fn_update_rowcount(self,fnt_id,job_id,rowcount):
+    try:
+        statement = f"""EXEC dbo.sp_update_db_delta_count  @fnt_id={fnt_id},@job_id='{job_id}',@row_count={rowcount}"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+  def fn_insert_connector_logs(self,FNT_ID,jobId):
+    try:
+        statement = f"""EXEC dbo.sp_insert_connector_logs @fk_fnt_id={FNT_ID},@job_run_id='{jobId}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+  def fn_update_connector_logs(self,row_count,job_run_id,lastwatermark_value):
+    try:
+        statement = f"""EXEC dbo.sp_update_connector_logs @row_count={row_count},@job_run_id='{job_run_id}',@lastwatermark_value='{lastwatermark_value}'"""
+        print(statement)
+        exec_statement = self.con.prepareCall(statement)
+        exec_statement.execute()             
+        exec_statement.close()   
+        return True,''
+    except Exception as e:
+        return False,e
+----------------------------------------------------------
+
+07. Testing_DB_to_Landing
+
+src_databasename=dbutils.secrets.get(scope='eda-dev-adb-scope',key=f'{KeyVaultSecret_prefix}-EDA-SQLDB-SQLusername')
+----------
+from F_dbcon import *
+from F_metadata_configs import *
+from F_mv_db_to_land import *
+---------
+spark1 = SparkSession.builder.appName('integrity-tests').config("spark.sql.legacy.timeParserPolicy","EXCEPTION").getOrCreate()
+sqlserver = dbutils.secrets.get(scope="eda-dev-adb-scope",key="RDBMS-EDA-SQLDB-ServerName")
+sqldatabase = dbutils.secrets.get(scope="eda-dev-adb-scope",key="RDBMS-EDA-SQLDB-DBName")
+src_servername=dbutils.secrets.get(scope='eda-dev-adb-scope',key='RDBMS-EDA-SQLDB-ServerName')
+src_databaseusername=dbutils.secrets.get(scope='eda-dev-adb-scope',key='RDBMS-EDA-SQLDB-SQLusername')
+src_databasename=dbutils.secrets.get(scope='eda-dev-adb-scope',key='RDBMS-EDA-SQLDB-DBName')
+src_databasepassword=dbutils.secrets.get(scope='eda-dev-adb-scope',key='RDBMS-EDA-SQLDB-DBPassword')
+src_url=f'jdbc:sqlserver://{src_servername}:1433;database={src_databasename};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;'
+jdbcDriver = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+
+src_qry = f"select CONVERT(VARCHAR(30),cast(max(modified_date) as datetime), 121) as modified_date from dbo.T_emp_data"
+
+
+
+# f"select CONVERT(VARCHAR(30),cast(max(modified_date) as datetime), 121) as modified_date from dbo.T_emp_data'
+------------------------
+jdbcDF = spark.read.format("jdbc") \
+.option("url",src_url) \
+.option("query", src_qry) \
+.option("user",src_databaseusername) \
+.option("password", src_databasepassword) \
+.option("driver",jdbcDriver) \
+.load()
+display(jdbcDF)
+-----------
+src_dbcn=azdbconnection(jdbcurl=src_url,jdbcUsername=src_databaseusername,jdbcPassword=src_databasepassword,jdbcdriver=jdbcDriver,session=spark1)
+---------
+sqlserver = dbutils.secrets.get(scope="eda-dev-adb-scope",key="RDBMS-EDA-SQLDB-ServerName")
+sqldatabase = dbutils.secrets.get(scope="eda-dev-adb-scope",key="RDBMS-EDA-SQLDB-DBName")
+url=f"jdbc:sqlserver://{sqlserver};databaseName={sqldatabase}"
+----------------
+df = spark.read.format('jdbc').option('url',src_url).option('dbtable','T_emp_data').option('user','edasqladmin').option('password','FoF@Admin').load()
+df.display()
+-----------------
+def fn_get_high_watermark(self,sql):
+    data=fn_read('select CONVERT(VARCHAR(30),cast(max(modified_date) as datetime), 121) as modified_date from dbo.T_emp_data')
+    print(data)
+    return data
+    ---------------
+    from dbcon import *
+from metadata_configs_updated import *
+from configs import *
+from mv_db_to_land_updated import *
+from commonfunc.F_databaseconnect import *
+--------------
+spark1 = SparkSession.builder.appName('integrity-tests').config("spark.sql.legacy.timeParserPolicy","EXCEPTION").getOrCreate()
+sqlserver = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SQLDB-ServerName")
+sqldatabase = dbutils.secrets.get(scope="eda-dev-adb-scope",key="EDA-SQLDB-DBName")
+src_servername=dbutils.secrets.get(scope='eda-dev-adb-scope',key='aws-EDA-SQLDB-ServerName')
+src_databaseusername=dbutils.secrets.get(scope='eda-dev-adb-scope',key='aws-EDA-SQLDB-SQLusername')
+src_databasename=dbutils.secrets.get(scope='eda-dev-adb-scope',key='aws-EDA-SQLDB-DBName')
+src_databasepassword=dbutils.secrets.get(scope='eda-dev-adb-scope',key='aws-EDA-SQLDB-DBPassword')
+src_url=f'jdbc:mysql://{src_servername}:3306/{src_databasename}'
+src_jdbcDriver = "com.mysql.cj.jdbc.Driver"
+-----------------
+src_dbcn=azdbconnection(jdbcurl=src_url,jdbcUsername=src_databaseusername,jdbcPassword=src_databasepassword,jdbcdriver=src_jdbcDriver,session=spark1)
+-------
+src_qry = f"select * from test_connect.employee"
+---------
+jdbcDF = spark.read.format("jdbc") \
+.option("url",src_url) \
+.option("query", src_qry) \
+.option("user",src_databaseusername) \
+.option("password", src_databasepassword) \
+.option("driver",src_jdbcDriver) \
+.load()
+display(jdbcDF)
+--------------
+jdbcDF = spark.read.format("jdbc") \
+.option("url",'jdbc:mysql://eda-rds-db.cxrlq5xbvwwj.us-east-1.rds.amazonaws.com:3306/test_connect') \
+.option("query", f"select TO_CHAR(MAX(modified_date), 'YYYY-MM-DD HH24:MI:SS') as modified_date from public.employee) as qry") \
+.option("user","admin") \
+.option("password","AWSBosch123") \
+.option("driver", "com.mysql.cj.jdbc.Driver") \
+.load()
+display(jdbcDF)
+------
+src_qry = f"select TO_CHAR(MAX(modified_date), 'YYYY-MM-DD HH24:MI:SS') as modified_date from public.employee) as qry"
+
+# src_qry = f"select CONVERT(VARCHAR(30),cast(max(modified_date) as datetime), 238) as modified_date from dbo.T_emp_data"
+
+# f"select CONVERT(VARCHAR(30),cast(max(modified_date) as datetime), 121) as modified_date from dbo.T_emp_data'
+----------------------------------------------------------------------------------------------------------------------------
+08.Test_Connection to Mysql
+
+from faker import Faker
+fake = Faker()
+------------------
+from faker import Faker
+from random import randint
+import pandas as pd
+import random
+from datetime import datetime
+import os
+import shutil
+import csv
+fake = Faker()
+def create_rows_faker(num=1):
+    output = [{ "emp_id":int(x),
+                   "empname":fake.first_name(),
+                   "age":random.randint(20,50) ,
+                   "salary":random.randint(10000,60000) ,
+                   "dob":fake.date_of_birth(),
+                   "modified_date":datetime.now()}for x in range(num)]
+    return output
+    --------------------------------------
+    def datagen_error_empname(df):
+    dfupdate=df.sample(20)
+    dfupdate['empname']=dfupdate['empname'].apply(lambda x: x+x)
+    return dfupdate
+    ---------
+    import numpy as np
+def datagen_error_dob(df):
+    dfupdate=df.sample(128)
+    dfupdate['dob']='NAN'
+    return dfupdate
+    --------------
+    df_faker = pd.DataFrame(create_rows_faker(1000))
+y=datagen_error_empname(df_faker)
+df_faker.update(y)
+m=datagen_error_dob(df_faker)
+df_faker.update(m)
+df_faker['dob'].replace({'NAN':np.nan},inplace=True)    
+----------
+display(df_faker)
+df1=spark.createDataFrame(df_faker)
+# display(df1)
+------------
+df1.printSchema()
+-----------------
+(df1.write
+  .format("jdbc")
+  .option("url", "jdbc:mysql://eda-rds-db.cxrlq5xbvwwj.us-east-1.rds.amazonaws.com:3306/test_connect")
+  .option("dbtable", "employee")
+  .option("user", "admin")
+  .option("password", "AWSBosch123")
+  .mode("append")
+  .save()
+)
+-----------------
+employees_table = (spark.read
+  .format("jdbc")
+  .option("url", 'jdbc:mysql://eda-rds-db.cxrlq5xbvwwj.us-east-1.rds.amazonaws.com:3306/test_connect')
+  .option("dbtable", "employee")
+  .option("user", "admin")
+  .option("password", "AWSBosch123")
+  .load()
+)
+------------
+
+employees_table = (spark.read
+  .format("jdbc")
+  .option("url", 'jdbc:mysql://eda-rds-db.cxrlq5xbvwwj.us-east-1.rds.amazonaws.com:3306/test_connect')
+  .option("dbtable", "employee")
+  .option("user", "admin")
+  .option("password", "AWSBosch123")
+  .load()
+)
+---------
+display(employees_table)
+------
+employees_table.createGlobalTempView("employees_table_aws")
+--------
+spark.sql("select * from global_temp.employees_table_aws order by modified_date desc").show()
+------------------
+driver = "org.postgresql.Driver"
+
+database_host = "postgres-testing.cxrlq5xbvwwj.us-east-1.rds.amazonaws.com" 
+database_port = "5432" # update if you use a non-default port
+database_name = "test_connect"
+table = "employee"
+user = "postgres"
+password = "AWSBosch123"
+
+url = f"jdbc:postgresql://{database_host}:{database_port}/{database_name}"
+
+remote_table = (df1.write
+  .format("jdbc")
+  .option("driver", driver)
+  .option("url", url)
+  .option("dbtable", table)
+  .option("user", user)
+  .option("password", password)
+  .save
+)
+
+--------------------
+remote_table = (spark.read
+  .format("jdbc")
+  .option("driver", driver)
+  .option("url", url)
+  .option("dbtable", table)
+  .option("user", user)
+  .option("password", password)
+  .load()
+)
+
+-------------
+remote_table.display()
+--------
+remote_table.createGlobalTempView("employees_table_postgres")
+
+------------
+spark.sql("select * from global.employee_table_postgres order by modified_date desc")
+-----------------------------------------------------------------------------------------------------------------------------------
+
+--------------
+
+
